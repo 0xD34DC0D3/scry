@@ -29,9 +29,12 @@ func (s *server) feedRoutes(mux *http.ServeMux) {
 	admin := func(h http.HandlerFunc) http.Handler { return s.auth.RequireAdmin(h) }
 	mux.Handle("POST "+feedsPath, admin(s.addFeed))
 	// POST, not DELETE, so the remove button works as a plain form.
-	mux.Handle("POST "+feedsPath+"/{id}/pause", admin(s.feedAction((*db.Queries).PauseFeed)))
-	mux.Handle("POST "+feedsPath+"/{id}/resume", admin(s.feedAction((*db.Queries).ResumeFeed)))
-	mux.Handle("POST "+feedsPath+"/{id}/remove", admin(s.feedAction((*db.Queries).DeleteFeed)))
+	// Each names where focus goes after its htmx swap: the row's button
+	// that replaced the clicked one (Pause swaps in Resume and back), or
+	// the panel heading once the row is gone.
+	mux.Handle("POST "+feedsPath+"/{id}/pause", admin(s.feedAction((*db.Queries).PauseFeed, "resume")))
+	mux.Handle("POST "+feedsPath+"/{id}/resume", admin(s.feedAction((*db.Queries).ResumeFeed, "pause")))
+	mux.Handle("POST "+feedsPath+"/{id}/remove", admin(s.feedAction((*db.Queries).DeleteFeed, "")))
 	mux.Handle("POST "+feedsPath+"/{id}/sync", admin(s.syncFeed))
 }
 
@@ -75,7 +78,8 @@ func (s *server) addFeed(w http.ResponseWriter, r *http.Request) {
 
 // feedAction runs a by-id write; zero rows affected means no such feed
 // (removed meanwhile, say), answered with the fresh panel and an error.
-func (s *server) feedAction(q func(*db.Queries, context.Context, int64) (int64, error)) http.HandlerFunc {
+// focus is the row's button to focus afterwards, "" for the heading.
+func (s *server) feedAction(q func(*db.Queries, context.Context, int64) (int64, error), focus string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
@@ -88,10 +92,10 @@ func (s *server) feedAction(q func(*db.Queries, context.Context, int64) (int64, 
 			return
 		}
 		if n == 0 {
-			s.renderCatalog(w, r, catalogData{Error: "That feed no longer exists."}, http.StatusNotFound)
+			s.renderCatalog(w, r, catalogData{Error: "That feed no longer exists.", FocusHeading: true}, http.StatusNotFound)
 			return
 		}
-		s.done(w, r, catalogData{})
+		s.done(w, r, catalogData{FocusFeed: id, FocusAction: focus, FocusHeading: focus == ""})
 	}
 }
 
@@ -108,7 +112,7 @@ func (s *server) syncFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.r.GetFeed(r.Context(), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			s.renderCatalog(w, r, catalogData{Error: "That feed no longer exists."}, http.StatusNotFound)
+			s.renderCatalog(w, r, catalogData{Error: "That feed no longer exists.", FocusHeading: true}, http.StatusNotFound)
 			return
 		}
 		s.internalError(w, r, "get feed", err)
@@ -116,10 +120,10 @@ func (s *server) syncFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.jobs.Send(r.Context(), jobs.SyncFeed(id)); err != nil {
 		slog.Error("send sync event", "feed_id", id, "err", err)
-		s.renderCatalog(w, r, catalogData{Error: "Couldn't start the sync. Try again."}, http.StatusServiceUnavailable)
+		s.renderCatalog(w, r, catalogData{Error: "Couldn't start the sync. Try again.", FocusFeed: id, FocusAction: "sync"}, http.StatusServiceUnavailable)
 		return
 	}
-	s.done(w, r, catalogData{Notice: "Sync queued."})
+	s.done(w, r, catalogData{Notice: "Sync queued.", FocusFeed: id, FocusAction: "sync"})
 }
 
 // normalizeFeedURL returns the form stored in feeds.url, or a message for

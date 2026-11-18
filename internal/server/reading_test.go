@@ -132,7 +132,7 @@ func TestReadingDone(t *testing.T) {
 	rec := do(h, postForm(fmt.Sprintf("/items/%d/read", ia["a1"]), url.Values{"back": {"/"}}, "user", hx))
 	frag := rec.Body.String()
 	if rec.Code != http.StatusOK || strings.Contains(frag, "<html") ||
-		!strings.Contains(frag, `class="entry read"`) || !strings.Contains(frag, "Mark unread") ||
+		!strings.Contains(frag, `class="post read"`) || !strings.Contains(frag, "Mark unread") ||
 		!strings.Contains(frag, `<span id="unread-total" class="n" hx-swap-oob="true">2</span>`) ||
 		!strings.Contains(frag, fmt.Sprintf(`<span id="unread-feed-%d" class="count" hx-swap-oob="true">1</span>`, a.ID)) {
 		t.Fatalf("htmx mark read: %d %s", rec.Code, frag)
@@ -218,8 +218,9 @@ func TestReadingUnreadView(t *testing.T) {
 	wantCounts(t, h, 2, nil)
 }
 
-// A subscribed feed's page is the reader scoped to that feed; anyone else
-// gets its excerpts.
+// A subscribed feed's page is the reader scoped to that feed; another
+// signed-in user gets its full posts without read state; signed out, its
+// excerpts.
 func TestReadingFeedPage(t *testing.T) {
 	h, d := newTestServer(t, nil)
 	a := seedFeed(t, d, "https://a.example/feed")
@@ -253,12 +254,32 @@ func TestReadingFeedPage(t *testing.T) {
 			t.Errorf("subscribed feed page has %q", n)
 		}
 	}
-	// Not subscribed: excerpts and a Subscribe button, no reader.
-	rec := do(h, get(fmt.Sprintf("/feeds/%d?view=all", other.ID), "user", nil))
+	// Signed in, not subscribed: full posts as cards, a Subscribe button
+	// (a plain post: the page turns into the reader), no read state.
+	otherPath := fmt.Sprintf("/feeds/%d", other.ID)
+	rec := do(h, get(otherPath+"?view=all", "user", nil))
 	body = rec.Body.String()
-	if rec.Code != http.StatusOK || !strings.Contains(body, "Post c1") || strings.Contains(body, "<p>Body of c1</p>") ||
-		strings.Contains(body, "reading-panel") || !strings.Contains(body, fmt.Sprintf(`action="/feeds/%d/subscribe">`, other.ID)) {
-		t.Errorf("unsubscribed feed page: %d %s", rec.Code, body)
+	for _, w := range []string{"Post c1", `<li class="post card" id="item-`, `<div class="prose"><p>Body of c1</p></div>`, "Open ↗",
+		fmt.Sprintf(`action="/feeds/%d/subscribe">`, other.ID)} {
+		if !strings.Contains(body, w) {
+			t.Errorf("unsubscribed feed page lacks %q", w)
+		}
+	}
+	for _, n := range []string{"reading-panel", `action="/items/`, "Mark read", "Mark unread", `class="badge off">read`, "Sign in", `class="excerpt"`} {
+		if strings.Contains(body, n) {
+			t.Errorf("unsubscribed feed page has %q", n)
+		}
+	}
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != privateCache ||
+		!strings.Contains(rec.Header().Get("Content-Security-Policy"), "img-src 'self' https:") {
+		t.Errorf("unsubscribed feed page: %d %v", rec.Code, rec.Header())
+	}
+	// Signed out: excerpts, publicly cacheable, images kept to 'self'.
+	rec = do(h, get(otherPath, "", nil))
+	body = rec.Body.String()
+	if !strings.Contains(body, `<p class="excerpt">Body of c1</p>`) || strings.Contains(body, "<p>Body of c1</p>") || strings.Contains(body, "card") ||
+		rec.Header().Get("Cache-Control") != publicCache || strings.Contains(rec.Header().Get("Content-Security-Policy"), "img-src") {
+		t.Errorf("signed-out feed page: %v %s", rec.Header(), body)
 	}
 	for _, p := range []string{"/feeds/x", "/feeds/-1", "/feeds/99999"} {
 		if rec := do(h, get(p, "user", nil)); rec.Code != http.StatusNotFound {
@@ -306,7 +327,7 @@ func TestHomeStream(t *testing.T) {
 		{"/following", []string{seg("/", unread, false), seg("/following", "Following", true), "Post a1", "Post a2",
 			fmt.Sprintf(`<a href="/feeds/%d?view=all"><span class="name">Alpha</span>`, a.ID), `<a class="app" href="/" aria-current="true">scry</a>`},
 			[]string{"Post b1"}},
-		{"/everything", []string{seg("/", unread, false), seg("/everything", "Everything", true), "Post a1", "Post b1", "Body of b1", `<ol class="items">`},
+		{"/everything", []string{seg("/", unread, false), seg("/everything", "Everything", true), "Post a1", "Post b1", "Body of b1", `<ol class="posts">`},
 			[]string{"<p>Body of", "Mark all read", "subscribed to any", "Sign in"}},
 	}
 	for _, tc := range tests {
@@ -479,8 +500,9 @@ func TestReadingHeaders(t *testing.T) {
 	b := seedFeed(t, d, "https://b.example/feed")
 	post(t, h, fmt.Sprintf("/feeds/%d/subscribe", a.ID), nil, nil)
 	feedA, feedB := fmt.Sprintf("/feeds/%d", a.ID), fmt.Sprintf("/feeds/%d", b.ID)
-	// The personal views: never stored, and article images allowed.
-	for _, p := range []string{homePath, followingPath, feedA, feedA + "?view=all"} {
+	// The personal views, and full posts on an unsubscribed feed's page:
+	// never stored, and article images allowed.
+	for _, p := range []string{homePath, followingPath, feedA, feedA + "?view=all", feedB} {
 		for _, hdr := range []map[string]string{nil, hx} {
 			rec := do(h, get(p, "user", hdr))
 			if cc := rec.Header().Get("Cache-Control"); cc != privateCache {
@@ -500,7 +522,7 @@ func TestReadingHeaders(t *testing.T) {
 	}
 	// Excerpt pages keep images to 'self', signed in or not.
 	for _, c := range []struct{ path, cookie string }{
-		{everythingPath, "user"}, {"/feeds", "user"}, {feedB, "user"}, {homePath, ""}, {feedA, ""},
+		{everythingPath, "user"}, {"/feeds", "user"}, {homePath, ""}, {feedA, ""}, {feedB, ""},
 	} {
 		if csp := do(h, get(c.path, c.cookie, nil)).Header().Get("Content-Security-Policy"); strings.Contains(csp, "img-src") {
 			t.Errorf("%s (%q) CSP widened: %q", c.path, c.cookie, csp)
@@ -535,7 +557,7 @@ func TestReadingContent(t *testing.T) {
 		`&lt;script&gt;x&lt;/script&gt;`,
 		`href="#ZgotmplZ"`,
 		"Post pruned",
-		`class="entry unread link-only"`,
+		fmt.Sprintf(`<li class="post" id="item-%d">`, ids["pruned"]), // link-only: a compact row
 		`aria-describedby="title-`,
 	} {
 		if !strings.Contains(body, want) {
@@ -545,7 +567,8 @@ func TestReadingContent(t *testing.T) {
 	if strings.Contains(body, "<script>x") {
 		t.Error("title not escaped")
 	}
-	// Full HTML stays off the excerpt pages, for anyone.
+	// Full HTML stays off the excerpt pages: Everything for anyone, a
+	// feed's page signed out.
 	for _, c := range []struct{ path, cookie string }{
 		{"/", ""}, {everythingPath, ""}, {everythingPath, "user"}, {fmt.Sprintf("/feeds/%d", a.ID), ""},
 	} {
@@ -590,7 +613,7 @@ func TestReadingPaging(t *testing.T) {
 				}
 			}
 			frag := do(h, get(older, "user", hx)).Body.String()
-			if strings.Contains(frag, "<html") || !strings.Contains(frag, "autofocus") || !strings.Contains(frag, "end of 30 days") {
+			if strings.Contains(frag, "<html") || !strings.Contains(frag, "autofocus") || !strings.Contains(frag, "That's everything from the last 30 days.") {
 				t.Errorf("Older fragment: %s", frag)
 			}
 			if strings.Count(frag, "autofocus") != 1 {
@@ -827,5 +850,85 @@ func TestReadingPostedOrder(t *testing.T) {
 	body, total, _ = readingState(t, h, followingPath)
 	if total != 2 || strings.Contains(body, "Post ancient") {
 		t.Errorf("out-of-window post: total %d", total)
+	}
+}
+
+// One post rendering: a post's title and meta line come out the same on
+// every page that lists it, as a compact row on the excerpt lists and for
+// a read post, as the card where it is unread or not tracked.
+func TestPostParity(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	a := seedFeed(t, d, "https://a.example/feed")
+	b := seedFeed(t, d, "https://b.example/feed")
+	post(t, h, fmt.Sprintf("/feeds/%d/subscribe", a.ID), nil, nil)
+	now := time.Now().Unix() + 10
+	ia := syncItems(t, d, a.ID, now, "a1", "a2")
+	ib := syncItems(t, d, b.ID, now, "b1")
+	post(t, h, fmt.Sprintf("/items/%d/read", ia["a1"]), nil, nil)
+
+	title := func(id int64, key string) string {
+		return fmt.Sprintf(`<h2 id="title-%d"><a href="https://post.example/%s">Post %s</a></h2>`, id, key, key)
+	}
+	row := func(id int64) string { return fmt.Sprintf(`<li class="post" id="item-%d">`, id) }
+	readRow := func(id int64) string { return fmt.Sprintf(`<li class="post read" id="item-%d">`, id) }
+	card := func(id int64) string { return fmt.Sprintf(`<li class="post card" id="item-%d">`, id) }
+	feedA, feedB := fmt.Sprintf("/feeds/%d", a.ID), fmt.Sprintf("/feeds/%d", b.ID)
+	for _, tc := range []struct {
+		path, cookie string
+		want         []string
+	}{
+		{everythingPath, "", []string{row(ia["a1"]), row(ia["a2"]), row(ib["b1"]), `<p class="excerpt">Body of b1</p>`}},
+		{everythingPath, "user", []string{row(ia["a1"]), row(ia["a2"]), row(ib["b1"])}},
+		{feedB, "", []string{row(ib["b1"])}},
+		{feedB, "user", []string{card(ib["b1"])}},
+		{homePath, "user", []string{card(ia["a2"])}},
+		{followingPath, "user", []string{card(ia["a2"]), readRow(ia["a1"]), `<details class="reread"><summary>Show post</summary>`, "Mark unread"}},
+		{feedA + "?view=all", "user", []string{card(ia["a2"]), readRow(ia["a1"])}},
+	} {
+		body := do(h, get(tc.path, tc.cookie, nil)).Body.String()
+		for _, w := range append(tc.want, `<ol class="posts">`) {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s (%q) lacks %q", tc.path, tc.cookie, w)
+			}
+		}
+		for k, id := range map[string]int64{"a1": ia["a1"], "a2": ia["a2"], "b1": ib["b1"]} {
+			if strings.Contains(body, fmt.Sprintf(`id="item-%d"`, id)) && !strings.Contains(body, title(id, k)) {
+				t.Errorf("%s (%q): %s's title differs", tc.path, tc.cookie, k)
+			}
+		}
+		for _, n := range []string{`class="item"`, `class="entry`, "entry-source", `class="items"`, `class="entries"`} {
+			if strings.Contains(body, n) {
+				t.Errorf("%s (%q) has old markup %q", tc.path, tc.cookie, n)
+			}
+		}
+	}
+}
+
+// Full posts on an unsubscribed feed's page come a reader's page at a time,
+// and the Older fragment focuses its first post.
+func TestFeedPostsPaging(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	a := seedFeed(t, d, "https://a.example/feed")
+	keys := make([]string, readingPageSize+2)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("k%02d", i)
+	}
+	syncItems(t, d, a.ID, time.Now().Unix(), keys...)
+	path := fmt.Sprintf("/feeds/%d", a.ID)
+	body := do(h, get(path, "user", nil)).Body.String()
+	if n := strings.Count(body, `<div class="prose">`); n != readingPageSize {
+		t.Errorf("%d full posts on page 1, want %d", n, readingPageSize)
+	}
+	m := olderRe.FindStringSubmatch(body)
+	if m == nil || !strings.Contains(body, fmt.Sprintf("Showing %d of %d", readingPageSize, len(keys))) {
+		t.Fatalf("no Older link or count: %s", body)
+	}
+	frag := do(h, get(strings.ReplaceAll(m[1], "&amp;", "&"), "user", hx)).Body.String()
+	if strings.Count(frag, `<div class="prose">`) != 2 || strings.Count(frag, "autofocus") != 1 || strings.Contains(frag, "<html") {
+		t.Errorf("Older fragment: %s", frag)
+	}
+	// Signed out the same feed is one page of excerpts.
+	if body := do(h, get(path, "", nil)).Body.String(); strings.Contains(body, "Older") || strings.Contains(body, `class="prose"`) {
+		t.Errorf("signed-out feed page: %s", body)
 	}
 }

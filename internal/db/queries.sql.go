@@ -287,6 +287,7 @@ const getReadingItem = `-- name: GetReadingItem :one
 SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url,
        CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) AS posted_at,
        CAST(coalesce(c.html, '') AS TEXT) AS html,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt,
        f.title AS feed_title, f.url AS feed_url,
        CAST(i.id > s.after_item_id AND i.first_seen_at > s.read_before_at AND r.item_id IS NULL AS INTEGER) AS unread,
        CAST(i.id > s.after_item_id AND i.first_seen_at > s.read_before_at AND r.item_id IS NOT NULL AS INTEGER) AS marked
@@ -312,6 +313,7 @@ type GetReadingItemRow struct {
 	CommentsUrl string
 	PostedAt    int64
 	Html        string
+	Excerpt     string
 	FeedTitle   string
 	FeedUrl     string
 	Unread      int64
@@ -332,6 +334,7 @@ func (q *Queries) GetReadingItem(ctx context.Context, arg GetReadingItemParams) 
 		&i.CommentsUrl,
 		&i.PostedAt,
 		&i.Html,
+		&i.Excerpt,
 		&i.FeedTitle,
 		&i.FeedUrl,
 		&i.Unread,
@@ -456,6 +459,88 @@ func (q *Queries) ListFeedItems(ctx context.Context, arg ListFeedItemsParams) ([
 			&i.Author,
 			&i.CommentsUrl,
 			&i.PostedAt,
+			&i.Excerpt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFeedPosts = `-- name: ListFeedPosts :many
+SELECT p.id, p.feed_id, p.url, p.title, p.author, p.comments_url, p.posted_at,
+       CAST(coalesce(c.html, '') AS TEXT) AS html,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt
+FROM (
+    SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url,
+           CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) AS posted_at
+    FROM items i
+    WHERE i.feed_id = ?1
+      AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(?2 AS INTEGER)
+      AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) <= CAST(?3 AS INTEGER)
+      AND (CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) < CAST(?3 AS INTEGER) OR i.id < CAST(?4 AS INTEGER))
+    ORDER BY CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) DESC, i.id DESC
+    LIMIT ?5
+) p
+LEFT JOIN item_contents c ON c.item_id = p.id
+ORDER BY p.posted_at DESC, p.id DESC
+`
+
+type ListFeedPostsParams struct {
+	FeedID   int64
+	Since    int64
+	BeforeAt int64
+	BeforeID int64
+	Lim      int64
+}
+
+type ListFeedPostsRow struct {
+	ID          int64
+	FeedID      int64
+	Url         string
+	Title       string
+	Author      string
+	CommentsUrl string
+	PostedAt    int64
+	Html        string
+	Excerpt     string
+}
+
+// One feed's items with their html, for a signed-in reader who does not
+// subscribe to it (no read state). Like ListReadingItems, the inner query
+// picks the page from the index without touching item_contents, so only
+// that page's html is read.
+func (q *Queries) ListFeedPosts(ctx context.Context, arg ListFeedPostsParams) ([]ListFeedPostsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFeedPosts,
+		arg.FeedID,
+		arg.Since,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFeedPostsRow{}
+	for rows.Next() {
+		var i ListFeedPostsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Url,
+			&i.Title,
+			&i.Author,
+			&i.CommentsUrl,
+			&i.PostedAt,
+			&i.Html,
 			&i.Excerpt,
 		); err != nil {
 			return nil, err
@@ -604,6 +689,7 @@ func (q *Queries) ListLatestItems(ctx context.Context, arg ListLatestItemsParams
 const listReadingItems = `-- name: ListReadingItems :many
 SELECT p.id, p.feed_id, p.url, p.title, p.author, p.comments_url, p.posted_at,
        CAST(coalesce(c.html, '') AS TEXT) AS html,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt,
        f.title AS feed_title, f.url AS feed_url,
        p.unread, p.marked
 FROM (
@@ -648,6 +734,7 @@ type ListReadingItemsRow struct {
 	CommentsUrl string
 	PostedAt    int64
 	Html        string
+	Excerpt     string
 	FeedTitle   string
 	FeedUrl     string
 	Unread      int64
@@ -685,6 +772,7 @@ func (q *Queries) ListReadingItems(ctx context.Context, arg ListReadingItemsPara
 			&i.CommentsUrl,
 			&i.PostedAt,
 			&i.Html,
+			&i.Excerpt,
 			&i.FeedTitle,
 			&i.FeedUrl,
 			&i.Unread,

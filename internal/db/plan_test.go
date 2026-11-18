@@ -41,6 +41,11 @@ func TestPublicQueriesUseIndex(t *testing.T) {
 		// Reading (step 6): per subscribed feed, the posted range of that
 		// feed; the merge across feeds sorts (a page of 10, after the range).
 		{"reading list", listReadingItems, 7, "SEARCH i USING INDEX items_feed_posted (feed_id=? AND <expr>>? AND <expr><?)", false},
+		// A feed's page for a signed-in non-subscriber: the page comes off
+		// the feed's posted range, and item_contents is read by key for
+		// that page only.
+		{"feed posts", listFeedPosts, 5, "SEARCH i USING INDEX items_feed_posted (feed_id=? AND <expr>>? AND <expr><?)", true},
+		{"feed posts content", listFeedPosts, 5, "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)", false},
 		{"reading unread count", listSubscriptions, 2, "SEARCH i USING INDEX items_feed_posted (feed_id=? AND <expr>>?)", false},
 		// Mark all read: the newest pre-render first_seen_at of each feed,
 		// read backwards from the end of items(feed_id, first_seen_at).

@@ -1,10 +1,6 @@
-{{/* Public views: Everything, the catalog, one feed's items. Excerpts are
-     plain text; titles and URLs go through html/template's escaping, so a
-     javascript: item URL renders as #ZgotmplZ. "items-page" is the fragment
-     the "Older" link fetches with htmx and swaps in place of itself; in that
-     fragment (.Partial) the first item carries autofocus, which htmx focuses
-     after the swap, so keyboard focus lands on the first new item instead of
-     falling back to <body>. */}}
+{{/* Public views: Everything, the catalog, one feed's page for anyone not
+     subscribed. Posts render through "post" (posts.html); "posts-page" is
+     the fragment the "Older" link fetches with htmx. */}}
 {{/* Everything: the home stream's switch when the user has subscriptions
      (the visible switch names the view, so the h1 is for screen readers),
      a nudge to subscribe when signed in without any, a sign-in note when
@@ -18,7 +14,8 @@
 {{template "item-list" .}}
 {{template "bottom" .}}{{end}}
 
-{{/* A feed's page for anyone not subscribed: header, then excerpts. */}}
+{{/* A feed's page for anyone not subscribed: header, then excerpts signed
+     out, full posts (no read state) signed in. */}}
 {{define "feed"}}{{template "top" .}}
 {{template "feed-head" .Data.Feed}}
 {{if not .User}}<p class="note"><a href="{{.LoginURL}}">Sign in</a> to subscribe and read full posts.</p>{{end}}
@@ -40,23 +37,11 @@
 {{with .Sub}}{{template "sub" .}}{{end}}{{end}}
 
 {{define "item-list"}}{{if .Data.Items}}
-<ol class="items">{{template "items-page" .}}</ol>
+<ol class="posts">{{template "posts-page" .}}</ol>
 {{else if .Data.Feed}}
 <p class="empty">{{if not .Data.Feed.LastPost.IsZero}}Nothing in the last 30 days (lists only show that window); last post was <time datetime="{{.Data.Feed.LastPost.Format "2006-01-02T15:04:05Z"}}">{{.Data.Feed.LastPost.Format "Jan 2, 2006"}}</time>.{{else}}This feed hasn't posted yet.{{end}} <a href="/everything">See the latest from every feed</a>.</p>
 {{else}}
 <p class="empty">Nothing in the last 30 days. <a href="/feeds">Browse the feeds</a>.</p>
-{{end}}{{end}}
-
-{{define "items-page"}}{{$feedPage := .Data.Feed}}{{$partial := .Partial}}{{range $i, $_ := .Data.Items}}
-<li class="item"{{if and $partial (eq $i 0)}} tabindex="-1" autofocus{{end}}>
-  <h2>{{if .URL}}<a href="{{.URL}}">{{.Heading}}</a>{{else}}{{.Heading}}{{end}}</h2>
-  <p class="item-meta"><time datetime="{{.Posted.Format "2006-01-02T15:04:05Z"}}" title="{{.Posted.Format "2006-01-02 15:04"}} UTC">{{.PostedAgo}}</time>{{if not $feedPage}} · <a href="/feeds/{{.FeedID}}">{{.FeedName}}</a>{{end}}{{with .Domain}} · {{.}}{{end}}{{with .Author}} · by {{.}}{{end}}{{with .CommentsURL}} · <a href="{{.}}">discussion</a>{{end}}</p>
-  {{if .ShowExcerpt}}<p class="excerpt">{{.Excerpt}}</p>{{end}}
-</li>
-{{end}}{{with .Data.Older}}
-<li class="more"><span class="count">Showing {{$.Data.Shown}} of {{$.Data.Total}}</span> · <a class="btn" href="{{.}}" hx-get="{{.}}" hx-target="closest li" hx-swap="outerHTML">Older</a></li>
-{{else}}
-<li class="end">That's everything from the last 30 days.</li>
 {{end}}{{end}}
 
 {{/* The catalog, for everyone. Admins (.Data.Admin) also get the add form,
@@ -64,16 +49,17 @@
      (failure details) only for them. Admin markup is cache-safe: an admin
      request carries a credential, so setCache makes it private, no-store.
      "catalog-panel" is the fragment every admin action swaps in; it holds
-     the add form so the input clears after an add. Paused covers both an
+     the add form so the input clears after an add, and the h1, so focus
+     can land on it once a removed row is gone. Paused covers both an
      admin pause and the auto-disable after 10 failures (the failure count
      and last error tell them apart); Resume clears either. */}}
 {{define "catalog"}}{{template "top" .}}
-<h1>Feeds</h1>
-{{if not .User}}<p class="note"><a href="{{.LoginURL}}">Sign in</a> to subscribe and read full posts.</p>{{end}}
 {{template "catalog-panel" .}}
 {{template "bottom" .}}{{end}}
 
-{{define "catalog-panel"}}{{$admin := .Data.Admin}}<div id="catalog-panel">
+{{define "catalog-panel"}}{{$admin := .Data.Admin}}{{$focus := .Partial}}<div id="catalog-panel">
+  <h1{{if and $focus .Data.FocusHeading}} tabindex="-1" autofocus{{end}}>Feeds</h1>
+  {{if not .User}}<p class="note"><a href="{{.LoginURL}}">Sign in</a> to subscribe and read full posts.</p>{{end}}
   {{with .Data.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
   {{with .Data.Notice}}<p class="flash" role="status">{{.}}</p>{{end}}
   {{if $admin}}
@@ -104,14 +90,14 @@
             <div class="actions">
               {{if $f.Paused}}
               <form method="post" action="/feeds/{{$f.ID}}/resume" hx-post="/feeds/{{$f.ID}}/resume" hx-target="#catalog-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
-                <button class="ghost" type="submit" aria-label="Resume {{$f.Name}}">Resume</button>
+                <button class="ghost" type="submit" aria-label="Resume {{$f.Name}}"{{if and $focus (eq $f.Focus "resume")}} autofocus{{end}}>Resume</button>
               </form>
               {{else}}
               <form method="post" action="/feeds/{{$f.ID}}/sync" hx-post="/feeds/{{$f.ID}}/sync" hx-target="#catalog-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
-                <button class="ghost" type="submit" aria-label="Sync {{$f.Name}} now">Sync now</button>
+                <button class="ghost" type="submit" aria-label="Sync {{$f.Name}} now"{{if and $focus (eq $f.Focus "sync")}} autofocus{{end}}>Sync now</button>
               </form>
               <form method="post" action="/feeds/{{$f.ID}}/pause" hx-post="/feeds/{{$f.ID}}/pause" hx-target="#catalog-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
-                <button class="ghost" type="submit" aria-label="Pause {{$f.Name}}">Pause</button>
+                <button class="ghost" type="submit" aria-label="Pause {{$f.Name}}"{{if and $focus (eq $f.Focus "pause")}} autofocus{{end}}>Pause</button>
               </form>
               {{end}}
               <details class="confirm">

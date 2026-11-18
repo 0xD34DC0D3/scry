@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"html/template"
 	"math"
 	"net/http"
 	"net/url"
@@ -20,9 +21,10 @@ import (
 
 // The public views, open to everyone: Everything (the latest items across
 // feeds; the home page signed out), the catalog, and one feed's items.
-// Excerpts only (plain text), linking out; item_contents.html is for
-// signed-in readers (reading.go), who get the reader on / and on a
-// subscribed feed's page instead.
+// Signed out, and on Everything for anyone, posts are excerpts (plain
+// text) linking out. item_contents.html is for signed-in users: the reader
+// (reading.go) on / and a subscribed feed's page, and a feed's page they
+// do not subscribe to (full posts, no read state).
 
 const (
 	// window is how far back the lists reach, by posted time (see itemView).
@@ -46,9 +48,10 @@ func (s *server) publicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /feeds/{id}", s.feedItems)
 }
 
-// itemView is one list entry. URL and CommentsURL go into href through
-// html/template's normal escaping, so a javascript: link from a feed renders
-// as #ZgotmplZ.
+// itemView is one post, as every list renders it (the "post" template):
+// a compact row, or the expanded card with the full body (Expanded). URL
+// and CommentsURL go into href through html/template's normal escaping, so
+// a javascript: link from a feed renders as #ZgotmplZ.
 type itemView struct {
 	ID, FeedID          int64
 	URL, Title, Excerpt string
@@ -63,7 +66,31 @@ type itemView struct {
 	// time. Pages are cached a minute at most, so minute precision holds;
 	// computing it server-side needs no script, which the CSP forbids inline.
 	PostedAgo string
+	// HTML comes only from item_contents.html, which bluemonday's UGC
+	// policy sanitized at ingest; nothing else may become template.HTML.
+	// Empty on excerpt lists and for link-only or pruned items.
+	HTML template.HTML
+	// Tracked: the post is in one of the user's subscriptions, so it has
+	// read state (Unread, Marked) and mark forms.
+	Tracked bool
+	Unread  bool
+	Marked  bool   // has an item_reads row that "mark unread" can remove
+	Back    string // where a plain (no-JS) mark post returns to
+	// ScopeFeed is the page's feed filter, so a mark action's counts match it.
+	ScopeFeed int64
+	Focus     bool // htmx moves focus here after the swap
 }
+
+// Expanded is the card with the full body: a post with HTML, unless it is
+// one the user has read (a read post collapses to a row with "Show post").
+func (i itemView) Expanded() bool { return i.HTML != "" && (!i.Tracked || i.Unread) }
+
+// Read is a tracked post the user has read.
+func (i itemView) Read() bool { return i.Tracked && !i.Unread }
+
+// Actions says whether a compact row has a control: "Show post" for a
+// read body, or a mark form.
+func (i itemView) Actions() bool { return i.Tracked && (i.HTML != "" || i.Unread || i.Marked) }
 
 // agoPrecision is the finest unit ago names. Items want minutes; the
 // catalog's last-post column wants days, where "3h ago" is noise.
@@ -141,11 +168,12 @@ func (i itemView) Heading() string {
 	return "(untitled)"
 }
 
-// ShowExcerpt is false only when the excerpt already serves, whole, as the
+// ShowExcerpt is false when the post has a full body (shown or behind
+// "Show post" instead), or when the excerpt already serves, whole, as the
 // heading, so the same words are not printed twice. A heading cut short from
 // a longer excerpt leaves the full text below rather than losing the rest.
 func (i itemView) ShowExcerpt() bool {
-	if i.Excerpt == "" {
+	if i.Excerpt == "" || i.HTML != "" {
 		return false
 	}
 	if strings.TrimSpace(i.Title) != "" {
@@ -223,6 +251,9 @@ type feedView struct {
 	// failure details never reach anyone else's page, even by mistake in a
 	// template.
 	Admin *feedAdmin
+	// Focus names the admin button ("resume", "pause", "sync") that takes
+	// focus after an htmx action on this feed swapped the panel.
+	Focus string
 }
 
 type feedAdmin struct {
@@ -238,25 +269,37 @@ type catalogData struct {
 	URL    string // the add form's value, kept when it was rejected
 	Error  string
 	Notice string
-	// FocusAdd puts autofocus on the URL field in an htmx answer to an add,
-	// so focus lands back there after the panel swap.
-	FocusAdd bool
+	// After an htmx action the clicked button is gone with the panel swap,
+	// so one of these puts autofocus where focus belongs: FocusAdd on the
+	// URL field after an add, FocusFeed's FocusAction button after a
+	// pause, resume or sync, FocusHeading on the panel's heading after a
+	// remove or a failed action (the row is gone).
+	FocusAdd     bool
+	FocusFeed    int64
+	FocusAction  string
+	FocusHeading bool
+}
+
+// postList is one page of posts and its Older link; every list page
+// embeds it, and the "posts-page" fragment renders it.
+type postList struct {
+	Items []itemView
+	Older string // next page's URL, empty on the last page
+	// Shown and InWindow place the page in the window ("Showing 100 of
+	// 312") next to the Older link. Shown counts every item down to this
+	// page's last, so it is right in an htmx fragment that only appends a
+	// page. Set only on the feed and Everything pages, with an Older link.
+	Shown, InWindow int64
 }
 
 type itemsData struct {
+	postList
 	Feed *feedView // nil on Everything
 	// Everything only: Switch is the home stream's view switch, for a
 	// signed-in user with a subscription; Nudge says to subscribe, for one
 	// without.
 	Switch *viewSwitch
 	Nudge  bool
-	Items  []itemView
-	Older  string // next page's URL, empty on the last page
-	// Shown and Total place the page in the window ("Showing 100 of 312")
-	// next to the Older link. Shown counts every item down to this page's
-	// last, so it is right in an htmx fragment that only appends a page.
-	// Only set when there is an Older link.
-	Shown, Total int64
 }
 
 func feedName(title, url string) string {
@@ -296,13 +339,29 @@ func cursor(r *http.Request) (at, id int64, ok bool) {
 }
 
 // older returns the next page's URL when the query, asked for one row more
-// than a page, filled it.
-func older(path string, items []itemView) ([]itemView, string) {
-	if len(items) <= pageSize {
+// than a page of size, filled it. path may carry a query already.
+func older(path string, items []itemView, size int) ([]itemView, string) {
+	if len(items) <= size {
 		return items, ""
 	}
-	last := pageSize - 1
-	return items[:pageSize], fmt.Sprintf("%s?before=%d-%d", path, items[last].Posted.Unix(), items[last].ID)
+	last := items[size-1]
+	return items[:size], fmt.Sprintf("%s%sbefore=%d-%d", path, querySep(path), last.Posted.Unix(), last.ID)
+}
+
+func querySep(path string) string {
+	if strings.Contains(path, "?") {
+		return "&"
+	}
+	return "?"
+}
+
+// focusFirst gives an Older page's first post autofocus: htmx focuses it
+// after the swap, so keyboard focus lands on the first new post instead of
+// falling back to <body> when the clicked link is replaced.
+func focusFirst(r *http.Request, items []itemView) {
+	if isHTMX(r) && r.URL.Query().Get("before") != "" && len(items) > 0 {
+		items[0].Focus = true
+	}
 }
 
 // lastPost converts a last_post_at column; 0 means no items.
@@ -342,6 +401,12 @@ func hasCredential(r *http.Request) bool {
 // and / when there is no one to show Unread to. Its Older link always
 // names /everything, which serves the same list either way.
 func (s *server) everything(w http.ResponseWriter, r *http.Request) {
+	s.renderEverything(w, r, false)
+}
+
+// renderEverything is Everything; noSubs says the caller already found the
+// signed-in user has no subscriptions (home), so they are not listed again.
+func (s *server) renderEverything(w http.ResponseWriter, r *http.Request, noSubs bool) {
 	at, id, ok := cursor(r)
 	if !ok {
 		s.badRequest(w, r, "That page link is malformed.")
@@ -366,7 +431,8 @@ func (s *server) everything(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	d := itemsData{}
-	d.Items, d.Older = older(everythingPath, items)
+	d.Items, d.Older = older(everythingPath, items, pageSize)
+	focusFirst(r, d.Items)
 	if d.Older != "" {
 		last := d.Items[len(d.Items)-1]
 		c, err := s.r.CountLatestItems(r.Context(), db.CountLatestItemsParams{
@@ -376,14 +442,16 @@ func (s *server) everything(w http.ResponseWriter, r *http.Request) {
 			s.internalError(w, r, "count latest items", err)
 			return
 		}
-		d.Shown, d.Total = c.Total-c.Older, c.Total
+		d.Shown, d.InWindow = c.Total-c.Older, c.Total
 	}
 	title := "Latest"
 	if voodooauth.UserFrom(r.Context()) != nil {
-		subs, err := s.subscriptionsOf(r)
-		if err != nil {
-			s.internalError(w, r, "list subscriptions", err)
-			return
+		var subs map[int64]subView
+		if !noSubs {
+			if subs, err = s.subscriptionsOf(r); err != nil {
+				s.internalError(w, r, "list subscriptions", err)
+				return
+			}
 		}
 		if len(subs) == 0 {
 			d.Nudge = true
@@ -397,7 +465,7 @@ func (s *server) everything(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	setCache(w, r)
-	s.web.Render(w, r, web.View{Page: "everything", Fragment: "items-page", Title: title, Data: d, Nav: "home", NavSub: r.URL.Path != homePath})
+	s.web.Render(w, r, web.View{Page: "everything", Fragment: "posts-page", Title: title, Data: d, Nav: "home", NavSub: r.URL.Path != homePath})
 }
 
 func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
@@ -434,6 +502,9 @@ func (s *server) renderCatalog(w http.ResponseWriter, r *http.Request, d catalog
 		feeds[i].Sub = subFor(subs, f.ID, feeds[i].Name, feedsPath)
 		if d.Admin {
 			feeds[i].Admin = &feedAdmin{FailCount: f.FailCount, LastError: f.LastError}
+			if f.ID == d.FocusFeed {
+				feeds[i].Focus = d.FocusAction
+			}
 		}
 	}
 	// The user's own feeds first, each group in the query's (title) order.
@@ -461,9 +532,10 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 		s.badRequest(w, r, "That page link is malformed.")
 		return
 	}
-	// A subscriber gets the reader scoped to this feed; anyone else the
-	// excerpts below.
-	if voodooauth.UserFrom(r.Context()) != nil {
+	// A subscriber gets the reader scoped to this feed; another signed-in
+	// user its full posts; anyone else its excerpts.
+	signedIn := voodooauth.UserFrom(r.Context()) != nil
+	if signedIn {
 		q := readingQuery{feed: fid, all: r.URL.Query().Get("view") == "all"}
 		d, found, err := s.readingData(r, q, at, id)
 		if err != nil {
@@ -484,31 +556,45 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "get feed", err)
 		return
 	}
-	cut := since()
-	rows, err := s.r.ListFeedItems(r.Context(), db.ListFeedItemsParams{
-		FeedID: fid, Since: cut, BeforeAt: at, BeforeID: id, Lim: pageSize + 1,
-	})
-	if err != nil {
-		s.internalError(w, r, "list feed items", err)
-		return
-	}
-	now := time.Now()
-	items := make([]itemView, len(rows))
-	for i, it := range rows {
-		posted := time.Unix(it.PostedAt, 0).UTC()
-		items[i] = itemView{
-			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
-			Domain: linkDomain(it.Url, f.SiteUrl, f.Url), Author: it.Author, CommentsURL: it.CommentsUrl,
-			Posted: posted, PostedAgo: ago(posted, now, toMinute),
-		}
-	}
-	subs, err := s.subscriptionsOf(r)
-	if err != nil {
-		s.internalError(w, r, "list subscriptions", err)
-		return
-	}
+	path := fmt.Sprintf("/feeds/%d", fid)
 	fv := &feedView{ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl, Paused: f.DisabledAt.Valid}
 	fv.Heading = feedHeading(f.Title, f.Url)
+	cut := since()
+	now := time.Now()
+	var items []itemView
+	size := pageSize
+	if signedIn {
+		// readingData found no subscription to this feed, so the control
+		// is Subscribe; posted plainly, since the page then turns into the
+		// reader.
+		fv.Sub = &subControl{FeedID: fid, Name: fv.Name, Back: path, Plain: true}
+		// Full posts are as long as the reader's, so its page size.
+		size = readingPageSize
+		rows, err := s.r.ListFeedPosts(r.Context(), db.ListFeedPostsParams{
+			FeedID: fid, Since: cut, BeforeAt: at, BeforeID: id, Lim: int64(size + 1),
+		})
+		if err != nil {
+			s.internalError(w, r, "list feed posts", err)
+			return
+		}
+		items = make([]itemView, len(rows))
+		for i, it := range rows {
+			items[i] = feedItem(it.ID, it.FeedID, it.Url, it.Title, it.Excerpt, it.Author, it.CommentsUrl, it.PostedAt, f, now)
+			items[i].HTML = template.HTML(it.Html) // sanitized at ingest (see itemView)
+		}
+	} else {
+		rows, err := s.r.ListFeedItems(r.Context(), db.ListFeedItemsParams{
+			FeedID: fid, Since: cut, BeforeAt: at, BeforeID: id, Lim: int64(size + 1),
+		})
+		if err != nil {
+			s.internalError(w, r, "list feed items", err)
+			return
+		}
+		items = make([]itemView, len(rows))
+		for i, it := range rows {
+			items[i] = feedItem(it.ID, it.FeedID, it.Url, it.Title, it.Excerpt, it.Author, it.CommentsUrl, it.PostedAt, f, now)
+		}
+	}
 	// Only an empty window needs it: say when a quiet feed last posted.
 	if len(items) == 0 {
 		last, err := s.r.GetFeedLastPostAt(r.Context(), fid)
@@ -518,11 +604,9 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 		}
 		fv.LastPost = lastPost(last)
 	}
-	if fv.Sub = subFor(subs, fid, fv.Name, fmt.Sprintf("/feeds/%d", fid)); fv.Sub != nil {
-		fv.Sub.Plain = true
-	}
 	d := itemsData{Feed: fv}
-	d.Items, d.Older = older(fmt.Sprintf("/feeds/%d", fid), items)
+	d.Items, d.Older = older(path, items, size)
+	focusFirst(r, d.Items)
 	if d.Older != "" {
 		last := d.Items[len(d.Items)-1]
 		c, err := s.r.CountFeedItems(r.Context(), db.CountFeedItemsParams{
@@ -532,10 +616,24 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 			s.internalError(w, r, "count feed items", err)
 			return
 		}
-		d.Shown, d.Total = c.Total-c.Older, c.Total
+		d.Shown, d.InWindow = c.Total-c.Older, c.Total
 	}
 	setCache(w, r)
-	s.web.Render(w, r, web.View{Page: "feed", Fragment: "items-page", Title: fv.Heading, Data: d, Nav: "feeds", NavSub: true})
+	if signedIn {
+		setReadingCSP(w)
+	}
+	s.web.Render(w, r, web.View{Page: "feed", Fragment: "posts-page", Title: fv.Heading, Data: d, Nav: "feeds", NavSub: true})
+}
+
+// feedItem is one post on a feed's own page: no feed name (the page
+// names it), the domain only when it is not the feed's own.
+func feedItem(id, feedID int64, link, title, excerpt, author, comments string, posted int64, f db.GetCatalogFeedRow, now time.Time) itemView {
+	t := time.Unix(posted, 0).UTC()
+	return itemView{
+		ID: id, FeedID: feedID, URL: link, Title: title, Excerpt: excerpt,
+		Domain: linkDomain(link, f.SiteUrl, f.Url), Author: author, CommentsURL: comments,
+		Posted: t, PostedAgo: ago(t, now, toMinute),
+	}
 }
 
 // feedReader renders a subscribed feed's page: the feed's header over its

@@ -19,8 +19,8 @@ import (
 )
 
 // Reading: signed-in users subscribe to feeds and read their items with the
-// full sanitized HTML, on the home stream (Unread at /, Following) and on a
-// subscribed feed's page. Everything here is personal, so it is never
+// full sanitized HTML and read state, on the home stream (Unread at /,
+// Following) and on a subscribed feed's page. Everything here is personal, so it is never
 // stored by a cache (private, no-store).
 
 const (
@@ -78,38 +78,24 @@ func homeSwitch(current string, total int64) *viewSwitch {
 	}}
 }
 
-// readingItem is one entry. HTML comes only from item_contents.html, which
-// bluemonday's UGC policy sanitized at ingest; nothing else may become
-// template.HTML.
-type readingItem struct {
-	itemView
-	HTML      template.HTML
-	Unread    bool
-	Marked    bool   // has an item_reads row that "mark unread" can remove
-	Back      string // where a plain (no-JS) post returns to
-	ScopeFeed int64  // the page's feed filter, so an action's count matches it
-	Focus     bool   // htmx moves focus here after the swap
-}
-
 type readingData struct {
+	postList
 	Header  *feedView // the feed page's header; nil on the home stream
 	Switch  *viewSwitch
 	Subs    []subView
 	Total   int64    // unread in the page's scope: every feed, or the page's feed
 	Feed    *subView // the page's feed, nil on the home stream
 	All     bool     // show read items too
-	Items   []readingItem
-	Older   string
-	UptoID  int64  // the newest item id at render, for "mark all read"
-	Self    string // this list's URL without the cursor
-	AllLink string // the same scope with read items too (the caught-up link)
+	UptoID  int64    // the newest item id at render, for "mark all read"
+	Self    string   // this list's URL without the cursor
+	AllLink string   // the same scope with read items too (the caught-up link)
 }
 
 // entryData is what an item action answers htmx with: the entry, plus the
 // fresh counts swapped out of band into the toolbar (for the page's scope)
 // and feed list.
 type entryData struct {
-	Item  readingItem
+	Item  itemView
 	Total int64
 	Feed  *subView
 }
@@ -125,22 +111,23 @@ func personal(w http.ResponseWriter) {
 	h.Set("Cache-Control", privateCache)
 }
 
-// readingItemFrom builds an entry the way the public lists build an item:
-// posted time as relative text (ago), the link's domain unless it is the
-// feed's own.
-func readingItemFrom(it db.ListReadingItemsRow, now time.Time) readingItem {
+// readingItemFrom builds a tracked post the way the public lists build
+// one: posted time as relative text (ago), the link's domain unless it is
+// the feed's own, the feed's name unless the page is scoped to that feed.
+func readingItemFrom(it db.ListReadingItemsRow, scope int64, now time.Time) itemView {
 	posted := time.Unix(it.PostedAt, 0).UTC()
-	return readingItem{
-		itemView: itemView{
-			ID: it.ID, FeedID: it.FeedID, URL: it.Url, Title: it.Title,
-			Domain: linkDomain(it.Url, it.FeedUrl), Author: it.Author, CommentsURL: it.CommentsUrl,
-			FeedName: feedName(it.FeedTitle, it.FeedUrl),
-			Posted:   posted, PostedAgo: ago(posted, now, toMinute),
-		},
-		HTML:   template.HTML(it.Html), // sanitized at ingest (see readingItem)
-		Unread: it.Unread != 0,
-		Marked: it.Marked != 0,
+	v := itemView{
+		ID: it.ID, FeedID: it.FeedID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt,
+		Domain: linkDomain(it.Url, it.FeedUrl), Author: it.Author, CommentsURL: it.CommentsUrl,
+		Posted: posted, PostedAgo: ago(posted, now, toMinute),
+		HTML:    template.HTML(it.Html), // sanitized at ingest (see itemView)
+		Tracked: true, Unread: it.Unread != 0, Marked: it.Marked != 0,
+		ScopeFeed: scope,
 	}
+	if scope == 0 {
+		v.FeedName = feedName(it.FeedTitle, it.FeedUrl)
+	}
+	return v
 }
 
 // readingQuery is the list's scope: the home stream (feed 0) or one
@@ -191,7 +178,7 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(d.Subs) == 0 {
-		s.everything(w, r)
+		s.renderEverything(w, r, true)
 		return
 	}
 	s.renderReading(w, r, d, "Unread")
@@ -213,11 +200,11 @@ func (s *server) following(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderReading answers with a reading list: the page, or on htmx the
-// Older page's entries.
+// Older page's posts.
 func (s *server) renderReading(w http.ResponseWriter, r *http.Request, d readingData, title string) {
 	personal(w)
 	setReadingCSP(w)
-	v := web.View{Page: "reading", Fragment: "reading-page", Title: title, Data: d, Nav: "home", NavSub: d.Self != homePath}
+	v := web.View{Page: "reading", Fragment: "posts-page", Title: title, Data: d, Nav: "home", NavSub: d.Self != homePath}
 	if d.Header != nil {
 		v.Nav, v.NavSub = "feeds", true
 	}
@@ -290,26 +277,18 @@ func (s *server) readingData(r *http.Request, q readingQuery, at, id int64) (rea
 		return d, false, err
 	}
 	now := time.Now()
-	items := make([]readingItem, len(rows))
+	items := make([]itemView, len(rows))
 	for i, row := range rows {
-		items[i] = readingItemFrom(row, now)
+		items[i] = readingItemFrom(row, q.feed, now)
 	}
-	sep := "?"
-	if strings.Contains(d.Self, "?") {
-		sep = "&"
-	}
-	if len(items) > readingPageSize {
-		last := items[readingPageSize-1]
-		d.Older = fmt.Sprintf("%s%sbefore=%d-%d", d.Self, sep, last.Posted.Unix(), last.ID)
-		items = items[:readingPageSize]
-	}
+	items, d.Older = older(d.Self, items, readingPageSize)
 	// A plain post returns to the same page of the list (its cursor
 	// included), scrolled to where the reader was: the entry itself in the
 	// all view, where it stays (collapsed); the next one in the unread view,
 	// where it disappears.
 	page := d.Self
 	if at != math.MaxInt64 {
-		page = fmt.Sprintf("%s%sbefore=%d-%d", d.Self, sep, at, id)
+		page = fmt.Sprintf("%s%sbefore=%d-%d", d.Self, querySep(d.Self), at, id)
 	}
 	for i := range items {
 		anchor := items[i].ID
@@ -320,15 +299,11 @@ func (s *server) readingData(r *http.Request, q readingQuery, at, id int64) (rea
 			}
 		}
 		items[i].Back = page
-		items[i].ScopeFeed = q.feed
 		if anchor != 0 {
 			items[i].Back += fmt.Sprintf("#item-%d", anchor)
 		}
 	}
-	// The first entry of an Older page takes focus (see reading.html).
-	if isHTMX(r) && r.URL.Query().Get("before") != "" && len(items) > 0 {
-		items[0].Focus = true
-	}
+	focusFirst(r, items)
 	d.Items = items
 	return d, true, nil
 }
@@ -408,8 +383,8 @@ func (s *server) markItem(read bool) http.HandlerFunc {
 		// The total out of band is the page's: the filter's feed when the
 		// form says the page was filtered (an unparsable value means none).
 		scope, _ := strconv.ParseInt(r.PostFormValue("feed"), 10, 64)
-		item := readingItemFrom(db.ListReadingItemsRow(row), time.Now())
-		item.Back, item.ScopeFeed = back, scope
+		item := readingItemFrom(db.ListReadingItemsRow(row), scope, time.Now())
+		item.Back = back
 		// The clicked button is gone with the swap; focus stays on the entry.
 		item.Focus = true
 		e := entryData{Item: item}

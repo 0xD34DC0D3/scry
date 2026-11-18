@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -565,6 +566,36 @@ func TestAddFeedFocus(t *testing.T) {
 		}
 	}
 	if strings.Contains(do(h, addFeedReq("nope", nil)).Body.String(), "autofocus") {
+		t.Error("full page autofocuses")
+	}
+}
+
+// Every admin action's htmx answer puts autofocus where focus belongs once
+// the clicked button is gone: the row's new button, or the panel heading
+// when the row is gone; exactly one per fragment.
+func TestFeedActionFocus(t *testing.T) {
+	h, d := newTestServer(t, &fakeJobs{})
+	f := seedFeed(t, d, "https://focus.example/feed")
+	seedFeed(t, d, "https://other.example/feed")
+	button := func(label string) *regexp.Regexp {
+		return regexp.MustCompile(fmt.Sprintf(`aria-label="%s[^"]*" autofocus>`, label))
+	}
+	for _, tc := range []struct {
+		action string
+		want   *regexp.Regexp
+	}{
+		{"pause", button("Resume")},
+		{"resume", button("Pause")},
+		{"sync", button("Sync")},
+		{"remove", regexp.MustCompile(`<h1 tabindex="-1" autofocus>Feeds</h1>`)},
+		{"remove", regexp.MustCompile(`<h1 tabindex="-1" autofocus>Feeds</h1>`)}, // already gone: the error
+	} {
+		body := do(h, postForm(actionPath(f.ID, tc.action), nil, "admin", hx)).Body.String()
+		if !tc.want.MatchString(body) || strings.Count(body, "autofocus") != 1 {
+			t.Errorf("%s: focus wrong: %s", tc.action, body)
+		}
+	}
+	if strings.Contains(do(h, get(feedsPath, "admin", nil)).Body.String(), "autofocus") {
 		t.Error("full page autofocuses")
 	}
 }

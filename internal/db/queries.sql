@@ -123,6 +123,28 @@ WHERE i.feed_id = sqlc.arg(feed_id)
 ORDER BY CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) DESC, i.id DESC
 LIMIT sqlc.arg(lim);
 
+-- One feed's items with their html, for a signed-in reader who does not
+-- subscribe to it (no read state). Like ListReadingItems, the inner query
+-- picks the page from the index without touching item_contents, so only
+-- that page's html is read.
+-- name: ListFeedPosts :many
+SELECT p.id, p.feed_id, p.url, p.title, p.author, p.comments_url, p.posted_at,
+       CAST(coalesce(c.html, '') AS TEXT) AS html,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt
+FROM (
+    SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url,
+           CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) AS posted_at
+    FROM items i
+    WHERE i.feed_id = sqlc.arg(feed_id)
+      AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(sqlc.arg(since) AS INTEGER)
+      AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) <= CAST(sqlc.arg(before_at) AS INTEGER)
+      AND (CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) < CAST(sqlc.arg(before_at) AS INTEGER) OR i.id < CAST(sqlc.arg(before_id) AS INTEGER))
+    ORDER BY CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) DESC, i.id DESC
+    LIMIT sqlc.arg(lim)
+) p
+LEFT JOIN item_contents c ON c.item_id = p.id
+ORDER BY p.posted_at DESC, p.id DESC;
+
 -- Position for the Older link: total is every item in the window, older the
 -- ones after the cursor (the last item shown), so the page shows
 -- total - older so far. One pass over the window's index range, covering:
@@ -236,6 +258,7 @@ ORDER BY f.title = '', f.title COLLATE NOCASE, f.url;
 -- name: ListReadingItems :many
 SELECT p.id, p.feed_id, p.url, p.title, p.author, p.comments_url, p.posted_at,
        CAST(coalesce(c.html, '') AS TEXT) AS html,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt,
        f.title AS feed_title, f.url AS feed_url,
        p.unread, p.marked
 FROM (
@@ -266,6 +289,7 @@ ORDER BY p.posted_at DESC, p.id DESC;
 SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url,
        CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) AS posted_at,
        CAST(coalesce(c.html, '') AS TEXT) AS html,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt,
        f.title AS feed_title, f.url AS feed_url,
        CAST(i.id > s.after_item_id AND i.first_seen_at > s.read_before_at AND r.item_id IS NULL AS INTEGER) AS unread,
        CAST(i.id > s.after_item_id AND i.first_seen_at > s.read_before_at AND r.item_id IS NOT NULL AS INTEGER) AS marked

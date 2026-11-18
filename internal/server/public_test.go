@@ -227,10 +227,10 @@ func TestPublicFragment(t *testing.T) {
 		t.Run(p, func(t *testing.T) {
 			full := do(f.h, get(p, "", nil)).Body.String()
 			frag := do(f.h, get(p, "", hx)).Body.String()
-			if !strings.Contains(full, "<html") || !strings.Contains(full, `<ol class="items">`) {
+			if !strings.Contains(full, "<html") || !strings.Contains(full, `<ol class="posts">`) {
 				t.Errorf("full page: %s", full)
 			}
-			if strings.Contains(frag, "<html") || strings.Contains(frag, "<ol") || !strings.Contains(frag, `<li class="item">`) || !strings.Contains(frag, "Alpha two") {
+			if strings.Contains(frag, "<html") || strings.Contains(frag, "<ol") || !strings.Contains(frag, `<li class="post" id="item-`) || !strings.Contains(frag, "Alpha two") {
 				t.Errorf("fragment: %s", frag)
 			}
 		})

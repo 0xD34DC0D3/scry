@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -214,7 +215,7 @@ func TestEndOfList(t *testing.T) {
 		// ends the list instead of swapping in nothing.
 		t.Run(p+" empty fragment", func(t *testing.T) {
 			rec := do(f.h, get(p+"?before=1-1", "", hx))
-			if body := rec.Body.String(); rec.Code != http.StatusOK || strings.Contains(body, `class="item"`) || !strings.Contains(body, end) {
+			if body := rec.Body.String(); rec.Code != http.StatusOK || strings.Contains(body, `class="post`) || !strings.Contains(body, end) {
 				t.Errorf("status %d, body: %s", rec.Code, body)
 			}
 		})
@@ -226,11 +227,12 @@ func TestEndOfList(t *testing.T) {
 func TestOlderFocusAndHeadings(t *testing.T) {
 	f := newPublicFixture(t)
 	full := do(f.h, get("/", "", nil)).Body.String()
-	frag := do(f.h, get("/", "", hx)).Body.String()
+	// An Older link always carries a cursor; this one starts above every item.
+	frag := do(f.h, get("/?before=9223372036854775807-9223372036854775807", "", hx)).Body.String()
 	if strings.Contains(full, "autofocus") {
 		t.Error("full page has autofocus")
 	}
-	if strings.Count(frag, "autofocus") != 1 || !strings.Contains(frag, `<li class="item" tabindex="-1" autofocus>`) {
+	if strings.Count(frag, "autofocus") != 1 || !regexp.MustCompile(`<li class="post" id="item-\d+" tabindex="-1" autofocus>`).MatchString(frag) {
 		t.Errorf("fragment autofocus: %s", frag)
 	}
 	for _, p := range []string{"/", "/everything", "/feeds", fmt.Sprintf("/feeds/%d", f.a.ID), "/nope"} {
@@ -260,7 +262,7 @@ func TestOffsiteCue(t *testing.T) {
 	if css.Code != http.StatusOK {
 		t.Fatalf("style.css status %d", css.Code)
 	}
-	for _, want := range []string{`.item h2 a[href^="http"]::after`, `.item-meta a[href^="http"]::after`, `content: "↗" / "";`} {
+	for _, want := range []string{`.post h2 a[href^="http"]::after`, `.item-meta a[href^="http"]::after`, `content: "↗" / "";`} {
 		if !strings.Contains(css.Body.String(), want) {
 			t.Errorf("style.css missing %q", want)
 		}
