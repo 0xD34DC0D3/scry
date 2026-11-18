@@ -72,3 +72,25 @@ func TestAccountChip(t *testing.T) {
 		})
 	}
 }
+
+func TestLayoutHasThemeToggle(t *testing.T) {
+	pages := fstest.MapFS{"p.html": {Data: []byte(`{{define "p"}}{{template "top" .}}hi{{template "bottom" .}}{{end}}`)}}
+	rec := httptest.NewRecorder()
+	New("app", "https://site.example", pages, voodooauth.New("http://voodoo.invalid")).Render(rec, httptest.NewRequest(http.MethodGet, "/", nil), View{Page: "p"})
+	body := rec.Body.String()
+	// theme.js must be synchronous (no defer) to set data-theme before paint.
+	if !strings.Contains(body, `<script src="/static/theme.js?v=`+version+`"></script>`) {
+		t.Errorf("sync theme.js script tag missing: %s", body)
+	}
+	if !strings.Contains(body, `<button id="theme-toggle" class="ghost theme-toggle" type="button" hidden>`) {
+		t.Errorf("theme toggle button missing or not hidden by default")
+	}
+}
+
+func TestStaticServesThemeJS(t *testing.T) {
+	rec := httptest.NewRecorder()
+	StaticHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/static/theme.js?v="+version, nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "localStorage") {
+		t.Errorf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+}

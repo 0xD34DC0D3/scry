@@ -80,65 +80,126 @@
 }
 
 /* ------------------------------------------------------------ dark mode
-   Follows the OS. theme.css is light-only (generated), so redefine the
-   tokens scry uses; the brutalist shadows are built from --color-ink, so
-   they flip to light offsets and still read on a dark canvas. Accent lime
-   stays put, which means anything painted on accent/tint needs dark text
-   regardless of theme: --on-accent. Overrides are prefixed with :root so
-   they outrank the later light-mode rules without touching them. */
+   Follows the OS unless the toggle (theme.js) set data-theme on <html>.
+   theme.css is light-only (generated), so redefine the tokens scry uses;
+   the brutalist shadows are built from --color-ink, so they flip to light
+   offsets and still read on a dark canvas. Accent lime stays put, so
+   anything painted on accent/tint needs dark text in either theme:
+   --on-accent. Overrides are prefixed with :root so they outrank the later
+   light-mode rules without touching them.
+
+   The dark rules appear twice (OS preference, explicit choice) because CSS
+   cannot share a block across a media query and an attribute selector.
+   THE TWO COPIES MUST MATCH: edit one, edit the other. */
 
 :root {
   color-scheme: light dark;
   --on-accent: #0b0b0b;
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --color-canvas: #0e0e0c;
     --color-surface: #1a1a17;
     --color-ink: #f2f1ec;
     --color-muted: #a9a89f;
-    --color-rule: #55544d;
+    --color-rule: #6b6a62;
     --color-info: #8c9dff; /* link underline + focus ring need 3:1 on dark */
   }
 
   /* text on accent / tint fills */
-  :root ::selection,
-  :root .skip:focus,
-  :root a:not(.btn):hover,
-  :root .brand .tile,
-  :root header nav a:hover,
-  :root header nav a[aria-current],
-  :root button:not(.ghost):not(.danger),
-  :root .badge.attn,
-  :root .flash,
-  :root .secret,
-  :root .consent .warn {
+  :root:not([data-theme="light"]) ::selection,
+  :root:not([data-theme="light"]) .skip:focus,
+  :root:not([data-theme="light"]) a:not(.btn):hover,
+  :root:not([data-theme="light"]) .brand .tile,
+  :root:not([data-theme="light"]) header nav a:hover,
+  :root:not([data-theme="light"]) header nav a[aria-current],
+  :root:not([data-theme="light"]) button:not(.ghost):not(.danger),
+  :root:not([data-theme="light"]) .badge.attn,
+  :root:not([data-theme="light"]) .flash,
+  :root:not([data-theme="light"]) .secret,
+  :root:not([data-theme="light"]) .consent .warn {
     color: var(--on-accent);
   }
 
   /* hover states that do not paint accent keep ink text */
-  :root .cards a:hover,
-  :root .brand a:hover {
+  :root:not([data-theme="light"]) .cards a:hover,
+  :root:not([data-theme="light"]) .brand a:hover {
     color: var(--ink);
   }
 
   /* the ink-coloured footer would be a glaring light bar; keep it dark */
-  :root footer {
+  :root:not([data-theme="light"]) footer {
     background: var(--surface);
     color: var(--ink);
   }
 
   /* inverted code block inside the accent box: stay dark, text light */
-  :root .secret pre {
+  :root:not([data-theme="light"]) .secret pre {
     background: var(--on-accent);
     color: var(--color-ink);
   }
 
   /* dot-grid texture at full ink is too loud on dark */
-  :root main:has(> .auth) {
+  :root:not([data-theme="light"]) main:has(> .auth) {
     background-image: radial-gradient(var(--rule) 1px, transparent 1px);
   }
+}
+
+/* explicit choice; keep identical to the media block above */
+:root[data-theme="dark"] {
+  --color-canvas: #0e0e0c;
+  --color-surface: #1a1a17;
+  --color-ink: #f2f1ec;
+  --color-muted: #a9a89f;
+  --color-rule: #6b6a62;
+  --color-info: #8c9dff; /* link underline + focus ring need 3:1 on dark */
+}
+
+/* text on accent / tint fills */
+:root[data-theme="dark"] ::selection,
+:root[data-theme="dark"] .skip:focus,
+:root[data-theme="dark"] a:not(.btn):hover,
+:root[data-theme="dark"] .brand .tile,
+:root[data-theme="dark"] header nav a:hover,
+:root[data-theme="dark"] header nav a[aria-current],
+:root[data-theme="dark"] button:not(.ghost):not(.danger),
+:root[data-theme="dark"] .badge.attn,
+:root[data-theme="dark"] .flash,
+:root[data-theme="dark"] .secret,
+:root[data-theme="dark"] .consent .warn {
+  color: var(--on-accent);
+}
+
+/* hover states that do not paint accent keep ink text */
+:root[data-theme="dark"] .cards a:hover,
+:root[data-theme="dark"] .brand a:hover {
+  color: var(--ink);
+}
+
+/* the ink-coloured footer would be a glaring light bar; keep it dark */
+:root[data-theme="dark"] footer {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* inverted code block inside the accent box: stay dark, text light */
+:root[data-theme="dark"] .secret pre {
+  background: var(--on-accent);
+  color: var(--color-ink);
+}
+
+/* dot-grid texture at full ink is too loud on dark */
+:root[data-theme="dark"] main:has(> .auth) {
+  background-image: radial-gradient(var(--rule) 1px, transparent 1px);
 }
 
 * {
@@ -345,6 +406,23 @@ header nav a[aria-current] {
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* own element beside .who; button's inline-flex would beat [hidden] */
+.theme-toggle {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  box-shadow: var(--shadow-brut-sm);
+}
+
+.theme-toggle[hidden] {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .theme-toggle {
+    min-height: 2.75rem;
+  }
 }
 
 main {

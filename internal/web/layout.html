@@ -13,6 +13,8 @@
   <link rel="preload" href="/static/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/theme.css?v={{.Ver}}">
   <link rel="stylesheet" href="/static/style.css?v={{.Ver}}">
+  {{- /* sync on purpose: sets data-theme before first paint (no flash) */}}
+  <script src="/static/theme.js?v={{.Ver}}"></script>
   <script src="/static/htmx.min.js?v={{.Ver}}" defer></script>
 </head>
 <body>
@@ -42,6 +44,8 @@
       <a href="{{.LoginURL}}">sign in</a>
       {{- end}}
     </div>
+    {{- /* unhidden by theme.js; useless without it */}}
+    <button id="theme-toggle" class="ghost theme-toggle" type="button" hidden>theme</button>
   </header>
   <main id="main"{{if .Wide}} class="wide"{{end}}>
 {{end}}
