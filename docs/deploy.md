@@ -171,7 +171,7 @@ Every variable is in `deploy/scry.env.example` (production) and
 - Logs: `journalctl -u scry -f`; restart: `systemctl restart scry`
 - Health: `curl https://scry.example.com/healthz`
 - Config check on the server:
-  `set -a; . /etc/scry/scry.env; set +a; sudo -u scry --preserve-env /usr/local/bin/scry doctor`
+  `set -a; . /etc/scry/scry.env; set +a; sudo -u scry --preserve-env="$(sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' /etc/scry/scry.env | paste -sd, -)" /usr/local/bin/scry doctor`
 
 ## Backups
 

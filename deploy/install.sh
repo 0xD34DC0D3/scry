@@ -31,6 +31,11 @@ fi
 # neither copying nor appending is safe. Apply Caddy changes by hand.
 
 set -a; . /etc/scry/scry.env; set +a
+# sudo-rs (Ubuntu's sudo) rejects a bare --preserve-env, so name the variables.
+env_vars="$(sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' /etc/scry/scry.env | paste -sd, -)"
+
+# On the first deploy there is no old binary to fall back to.
+restart_old() { if [[ -f "$BIN" ]]; then systemctl start scry; fi; }
 
 echo ">> stopping service"
 systemctl stop scry
@@ -38,8 +43,8 @@ systemctl stop scry
 echo ">> migrating with the new binary"
 if ! sudo -u scry --preserve-env=SCRY_DB_PATH "$BIN.new" migrate up; then
 	rm -f "$BIN.new"
-	systemctl start scry
-	echo "!! migration failed; old binary restarted. If the schema is now" >&2
+	restart_old
+	echo "!! migration failed; old binary restarted (if any). If the schema is now" >&2
 	echo "!! inconsistent, restore the backup above (docs/deploy.md)." >&2
 	exit 1
 fi
@@ -47,10 +52,10 @@ fi
 # doctor needs the migrated schema, so it runs after migrate. In prod it also
 # requires voodoo's /healthz to answer.
 echo ">> doctor (new binary, production config)"
-if ! sudo -u scry --preserve-env "$BIN.new" doctor; then
+if ! sudo -u scry --preserve-env="$env_vars" "$BIN.new" doctor; then
 	rm -f "$BIN.new"
-	systemctl start scry
-	echo "!! doctor failed; old binary restarted. Fix the config or voodoo," >&2
+	restart_old
+	echo "!! doctor failed; old binary restarted (if any). Fix the config or voodoo," >&2
 	echo "!! then redeploy. The migration above was already applied." >&2
 	exit 1
 fi
