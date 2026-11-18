@@ -36,10 +36,10 @@
       {{- /* Posts straight to voodoo, which accepts logout from sibling hosts
              and ends the session for every app. */}}
       <form method="post" action="{{$.LogoutURL}}">
-        <button class="ghost" type="submit">log out</button>
+        <button class="ghost" type="submit">sign out</button>
       </form>
       {{- else}}
-      <a href="{{.LoginURL}}">log in</a>
+      <a href="{{.LoginURL}}">sign in</a>
       {{- end}}
     </div>
   </header>

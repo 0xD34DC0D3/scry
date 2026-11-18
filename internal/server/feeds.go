@@ -141,7 +141,7 @@ func (s *server) syncFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.jobs.Send(r.Context(), jobs.SyncFeed(id)); err != nil {
 		slog.Error("send sync event", "feed_id", id, "err", err)
-		s.renderFeeds(w, r, feedsData{Error: "Could not queue the sync; try again."}, http.StatusServiceUnavailable)
+		s.renderFeeds(w, r, feedsData{Error: "Couldn't start the sync. Try again."}, http.StatusServiceUnavailable)
 		return
 	}
 	if r.Header.Get("HX-Request") != "true" {
@@ -155,7 +155,7 @@ func (s *server) syncFeed(w http.ResponseWriter, r *http.Request) {
 // the admin. Private addresses are not checked here: the fetcher refuses
 // them on every request, redirects included.
 func normalizeFeedURL(raw string) (string, string) {
-	const want = "Enter an absolute http or https URL, such as https://example.com/feed.xml."
+	const want = "Enter a full http or https URL, like https://example.com/feed.xml."
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return "", want

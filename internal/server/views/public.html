@@ -14,11 +14,11 @@
 {{define "feed"}}{{template "top" .}}
 {{with .Data.Feed}}
 <h1>{{.Name}}</h1>
-<p class="backlink"><a href="/feeds">cd ..</a> <span class="path">/feeds</span></p>
+<p class="backlink"><a href="/feeds">← back</a> <span class="path">/feeds</span></p>
 <p class="feed-meta">
   {{if .Paused}}<span class="badge off">paused</span>{{end}}
-  {{with .SiteURL}}<a href="{{.}}">site</a>{{end}}
-  <a href="{{.URL}}">feed</a>
+  {{with .SiteURL}}<a href="{{.}}">website</a>{{end}}
+  <a href="{{.URL}}">rss</a>
 </p>
 {{end}}
 {{template "item-list" .}}
@@ -52,12 +52,12 @@
 {{with .Data}}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Feed</th><th>Last 30 days</th><th>Status</th></tr></thead>
+    <thead><tr><th>Feed</th><th>Posts (30 days)</th><th>Status</th></tr></thead>
     <tbody>
     {{range .}}
       <tr>
         <td data-label="Feed"><a href="/feeds/{{.ID}}">{{.Name}}</a>{{with .SiteURL}}<br><code>{{.}}</code>{{end}}</td>
-        <td data-label="Last 30 days">{{.RecentItems}}</td>
+        <td data-label="Posts (30 days)">{{.RecentItems}}</td>
         <td data-label="Status">{{if .Paused}}<span class="badge off">paused</span>{{else}}<span class="badge">active</span>{{end}}</td>
       </tr>
     {{end}}

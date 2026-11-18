@@ -115,14 +115,14 @@ func TestFeedRoutesAuth(t *testing.T) {
 
 func TestAddFeedInvalid(t *testing.T) {
 	for _, tc := range []struct{ name, url, msg string }{
-		{"empty", "", "absolute http or https"},
-		{"blank", "   ", "absolute http or https"},
-		{"relative", "/feed.xml", "absolute http or https"},
-		{"no scheme", "example.com/feed", "absolute http or https"},
-		{"no host", "https:///feed", "absolute http or https"},
-		{"opaque", "http:example.com", "absolute http or https"},
-		{"ftp", "ftp://example.com/feed", "absolute http or https"},
-		{"javascript", "javascript:alert(1)", "absolute http or https"},
+		{"empty", "", "full http or https URL"},
+		{"blank", "   ", "full http or https URL"},
+		{"relative", "/feed.xml", "full http or https URL"},
+		{"no scheme", "example.com/feed", "full http or https URL"},
+		{"no host", "https:///feed", "full http or https URL"},
+		{"opaque", "http:example.com", "full http or https URL"},
+		{"ftp", "ftp://example.com/feed", "full http or https URL"},
+		{"javascript", "javascript:alert(1)", "full http or https URL"},
 		{"userinfo", "https://bob:secret@example.com/feed", "user name or password"},
 		{"user only", "https://bob@example.com/feed", "user name or password"},
 		{"too long", "https://example.com/" + strings.Repeat("a", maxFeedURL), "too long"},
@@ -413,11 +413,11 @@ func TestSyncNow(t *testing.T) {
 		h, d := newTestServer(t, &fakeJobs{sendErr: errors.New("down")})
 		f := seedFeed(t, d, "https://seed.example/feed")
 		rec := do(h, postForm(actionPath(f.ID, "sync"), nil, "admin", nil))
-		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "Could not queue") {
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "start the sync") {
 			t.Errorf("plain: %d", rec.Code)
 		}
 		rec = do(h, postForm(actionPath(f.ID, "sync"), nil, "admin", hx))
-		if rec.Code != http.StatusOK || !isFragment(rec.Body.String()) || !strings.Contains(rec.Body.String(), "Could not queue") {
+		if rec.Code != http.StatusOK || !isFragment(rec.Body.String()) || !strings.Contains(rec.Body.String(), "start the sync") {
 			t.Errorf("htmx: %d %s", rec.Code, rec.Body.String())
 		}
 	})
