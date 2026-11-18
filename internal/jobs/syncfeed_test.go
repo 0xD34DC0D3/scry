@@ -319,9 +319,10 @@ func TestSyncFailures(t *testing.T) {
 
 func TestSyncFailureBackoffCapped(t *testing.T) {
 	e := newEnv(t, http.NotFoundHandler())
-	e.exec(t, `UPDATE feeds SET fail_count = 20 WHERE id = ?`, e.feed)
+	// The 9th failure: capped, and one short of the auto-disable.
+	e.exec(t, `UPDATE feeds SET fail_count = 8 WHERE id = ?`, e.feed)
 	e.sync(t, now)
-	if f := e.getFeed(t); f.FailCount != 21 || f.NextFetchAt != now.Add(24*time.Hour).Unix() || f.DisabledAt.Valid {
+	if f := e.getFeed(t); f.FailCount != 9 || f.NextFetchAt != now.Add(24*time.Hour).Unix() || f.DisabledAt.Valid {
 		t.Errorf("feed %+v", f)
 	}
 }

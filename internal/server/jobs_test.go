@@ -80,11 +80,11 @@ func TestJobsRouteThroughMiddleware(t *testing.T) {
 
 // The real SDK handler answers through the stack: in dev mode GET is its
 // unauthenticated inspection, which lists the registered functions
-// (syncFeed).
+// (sync-feed and schedule-feeds).
 func TestJobsRouteRealSDK(t *testing.T) {
 	h := newTestHandler(t)
 	rec := do(h, httptest.NewRequest(http.MethodGet, jobs.Path, nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"function_count":1`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"function_count":2`) {
 		t.Fatalf("GET %s = %d %s", jobs.Path, rec.Code, rec.Body.String())
 	}
 }

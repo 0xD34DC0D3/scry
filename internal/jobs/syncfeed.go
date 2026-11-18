@@ -18,7 +18,7 @@ import (
 const SyncFeedEvent = "scry/feed.sync"
 
 const (
-	syncInterval = time.Hour // step 4 owns scheduling; this is a placeholder
+	syncInterval = time.Hour // after a success, and the schedule's claim lease
 	maxLastError = 500       // bytes
 )
 
@@ -41,7 +41,17 @@ type syncResult struct {
 
 func (d Deps) registerSyncFeed(c inngestgo.Client) error {
 	_, err := inngestgo.CreateFunction(c,
-		inngestgo.FunctionOpts{ID: "sync-feed", Name: "Sync feed"},
+		inngestgo.FunctionOpts{
+			ID: "sync-feed", Name: "Sync feed",
+			// One sync per feed at a time, so the cron and "sync now"
+			// never fetch the same feed at once (extra runs queue), and
+			// about 10 overall. The function is one step, so step-level
+			// limits cover the whole run.
+			Concurrency: &inngestgo.ConfigConcurrency{Step: []inngestgo.ConfigStepConcurrency{
+				{Limit: 1, Key: inngestgo.StrPtr("event.data.feed_id")},
+				{Limit: 10},
+			}},
+		},
 		inngestgo.EventTrigger(SyncFeedEvent, nil),
 		func(ctx context.Context, in inngestgo.Input[SyncFeedData]) (any, error) {
 			// One step for fetch, parse and write: a step's output is all

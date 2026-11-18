@@ -55,5 +55,8 @@ func New(d Deps) (inngestgo.Client, error) {
 
 // register adds every function to c.
 func (d Deps) register(c inngestgo.Client) error {
-	return d.registerSyncFeed(c)
+	if err := d.registerSyncFeed(c); err != nil {
+		return err
+	}
+	return d.registerSchedule(c)
 }

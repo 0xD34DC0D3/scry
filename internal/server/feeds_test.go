@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -420,4 +421,64 @@ func TestSyncNow(t *testing.T) {
 			t.Errorf("htmx: %d %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// Failing and auto-disabled feeds show their state and last_error, and an
+// auto-disabled feed resumes like a paused one.
+func TestFeedsListsFailing(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	type state struct {
+		fails    int
+		lastErr  string
+		disabled any
+	}
+	cases := []struct {
+		name   string
+		st     state
+		badge  string
+		action string
+	}{
+		{"healthy", state{0, "", nil}, `badge">active`, "sync"},
+		{"failing", state{3, "HTTP 500", nil}, `badge bad">failing`, "sync"},
+		{"auto-disabled", state{10, "HTTP 410 <gone>", 1_800_000_000}, `badge off">paused`, "resume"},
+	}
+	ids := map[string]int64{}
+	for _, tc := range cases {
+		f := seedFeed(t, d, "https://"+tc.name+".example/feed")
+		ids[tc.name] = f.ID
+		if _, err := d.Writer.Exec(`UPDATE feeds SET fail_count = ?, last_error = ?, disabled_at = ? WHERE id = ?`,
+			tc.st.fails, tc.st.lastErr, tc.st.disabled, f.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page := do(h, withCookie(httptest.NewRequest(http.MethodGet, feedsPath, nil), "admin")).Body.String()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var row string
+			for _, r := range strings.Split(page, "<tr>") {
+				if strings.Contains(r, "https://"+tc.name+".example/feed") {
+					row = r
+				}
+			}
+			if row == "" {
+				t.Fatalf("feed not listed: %s", page)
+			}
+			want := []string{tc.badge, fmt.Sprintf(`Failures">%d<`, tc.st.fails), actionPath(ids[tc.name], tc.action)}
+			if tc.st.lastErr != "" {
+				want = append(want, html.EscapeString(tc.st.lastErr))
+			}
+			for _, w := range want {
+				if !strings.Contains(row, w) {
+					t.Errorf("row lacks %q: %s", w, row)
+				}
+			}
+		})
+	}
+
+	if rec := do(h, postForm(actionPath(ids["auto-disabled"], "resume"), nil, "admin", nil)); rec.Code != http.StatusSeeOther {
+		t.Fatalf("resume: %d", rec.Code)
+	}
+	if got, _ := getFeed(t, d, ids["auto-disabled"]); got.DisabledAt.Valid || got.FailCount != 0 || got.LastError != "" || got.NextFetchAt != 0 {
+		t.Errorf("resume left %+v", got)
+	}
 }

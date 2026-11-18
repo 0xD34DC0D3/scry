@@ -1,5 +1,8 @@
 {{/* Admin feed catalog. "feeds-panel" is the fragment every htmx action
-     swaps in; it includes the add form so the input clears after an add. */}}
+     swaps in; it includes the add form so the input clears after an add.
+     Paused covers both an admin pause and the auto-disable after 10
+     failures (fail_count and last_error tell them apart); Resume clears
+     either. */}}
 {{define "feeds"}}{{template "top" .}}
 <h1>Feeds</h1>
 {{template "feeds-panel" .}}
@@ -25,7 +28,7 @@
       {{range .}}
         <tr>
           <td data-label="Feed">{{with .Title}}{{.}}<br>{{end}}<code>{{.Url}}</code></td>
-          <td data-label="Status">{{if .DisabledAt.Valid}}<span class="badge off">paused</span>{{else}}<span class="badge">active</span>{{end}}</td>
+          <td data-label="Status">{{if .DisabledAt.Valid}}<span class="badge off">paused</span>{{else if .FailCount}}<span class="badge bad">failing</span>{{else}}<span class="badge">active</span>{{end}}</td>
           <td data-label="Failures">{{.FailCount}}</td>
           <td data-label="Last error">{{.LastError}}</td>
           <td data-label="">

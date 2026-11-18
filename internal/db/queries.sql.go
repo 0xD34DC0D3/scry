@@ -10,6 +10,50 @@ import (
 	"database/sql"
 )
 
+const claimDueFeeds = `-- name: ClaimDueFeeds :many
+UPDATE feeds
+SET next_fetch_at = ?1
+WHERE id IN (
+    SELECT due.id FROM feeds AS due
+    WHERE due.next_fetch_at <= CAST(?2 AS INTEGER) AND due.disabled_at IS NULL
+    ORDER BY due.next_fetch_at, due.id
+    LIMIT ?3
+)
+RETURNING id
+`
+
+type ClaimDueFeedsParams struct {
+	Until int64
+	Now   int64
+	Lim   int64
+}
+
+// Schedule (internal/jobs). Claims up to lim due feeds in one statement:
+// moving next_fetch_at to until takes them out of the next claim, so a
+// retried or overlapping claim never returns the same feed twice.
+func (q *Queries) ClaimDueFeeds(ctx context.Context, arg ClaimDueFeedsParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, claimDueFeeds, arg.Until, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createFeed = `-- name: CreateFeed :one
 INSERT INTO feeds (url) VALUES (?) ON CONFLICT (url) DO NOTHING RETURNING id, url, title, site_url, etag, last_modified, next_fetch_at, fail_count, last_error, disabled_at
 `
@@ -48,7 +92,8 @@ const feedFailed = `-- name: FeedFailed :execrows
 UPDATE feeds
 SET fail_count = fail_count + 1,
     last_error = ?1,
-    next_fetch_at = CAST(?2 AS INTEGER) + min(1800 << min(fail_count, 6), 86400)
+    next_fetch_at = CAST(?2 AS INTEGER) + min(1800 << min(fail_count, 6), 86400),
+    disabled_at = CASE WHEN fail_count + 1 >= 10 THEN CAST(?2 AS INTEGER) END
 WHERE id = ?3 AND disabled_at IS NULL
 `
 
@@ -59,7 +104,8 @@ type FeedFailedParams struct {
 }
 
 // Backoff from the old fail_count, in one statement so overlapping syncs
-// cannot both read the same count: 30 min doubling, capped at 24 h.
+// cannot both read the same count: 30 min doubling, capped at 24 h. The
+// 10th consecutive failure also disables the feed (shown as paused).
 func (q *Queries) FeedFailed(ctx context.Context, arg FeedFailedParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, feedFailed, arg.LastError, arg.Now, arg.ID)
 	if err != nil {

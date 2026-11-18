@@ -39,13 +39,29 @@ SET title = coalesce(nullif(CAST(sqlc.arg(title) AS TEXT), ''), title),
 WHERE id = sqlc.arg(id) AND disabled_at IS NULL;
 
 -- Backoff from the old fail_count, in one statement so overlapping syncs
--- cannot both read the same count: 30 min doubling, capped at 24 h.
+-- cannot both read the same count: 30 min doubling, capped at 24 h. The
+-- 10th consecutive failure also disables the feed (shown as paused).
 -- name: FeedFailed :execrows
 UPDATE feeds
 SET fail_count = fail_count + 1,
     last_error = sqlc.arg(last_error),
-    next_fetch_at = CAST(sqlc.arg(now) AS INTEGER) + min(1800 << min(fail_count, 6), 86400)
+    next_fetch_at = CAST(sqlc.arg(now) AS INTEGER) + min(1800 << min(fail_count, 6), 86400),
+    disabled_at = CASE WHEN fail_count + 1 >= 10 THEN CAST(sqlc.arg(now) AS INTEGER) END
 WHERE id = sqlc.arg(id) AND disabled_at IS NULL;
+
+-- Schedule (internal/jobs). Claims up to lim due feeds in one statement:
+-- moving next_fetch_at to until takes them out of the next claim, so a
+-- retried or overlapping claim never returns the same feed twice.
+-- name: ClaimDueFeeds :many
+UPDATE feeds
+SET next_fetch_at = sqlc.arg(until)
+WHERE id IN (
+    SELECT due.id FROM feeds AS due
+    WHERE due.next_fetch_at <= CAST(sqlc.arg(now) AS INTEGER) AND due.disabled_at IS NULL
+    ORDER BY due.next_fetch_at, due.id
+    LIMIT sqlc.arg(lim)
+)
+RETURNING id;
 
 -- An existing item keeps its id and first_seen_at, so it never shows as new
 -- again; the rest follows the feed's latest copy.
