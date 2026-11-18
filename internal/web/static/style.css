@@ -1022,6 +1022,21 @@ main:has(> .auth) {
   color: var(--muted);
 }
 
+/* off-site cue on story and discussion links. [href^="http"] is exactly the
+   external ones: the feed-name link is a relative path, and an unsafe URL
+   renders as #ZgotmplZ. The first content declaration is the fallback for
+   browsers without alt-text syntax; the second gives the arrow an empty
+   alt, so screen readers do not announce it on every link. */
+.item h2 a[href^="http"]::after,
+.item-meta a[href^="http"]::after {
+  content: "↗";
+  content: "↗" / "";
+  margin-left: 0.25em;
+  font-weight: 400;
+  color: var(--muted);
+  text-decoration: none;
+}
+
 .item-meta,
 .feed-meta {
   font: 0.75rem var(--mono);

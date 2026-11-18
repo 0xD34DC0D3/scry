@@ -283,6 +283,34 @@ func TestOlderFocusAndHeadings(t *testing.T) {
 	}
 }
 
+// Story and discussion links get a CSS-only off-site arrow (silent to screen
+// readers) and open in the same tab; the internal feed-name link does not
+// match the rule.
+func TestOffsiteCue(t *testing.T) {
+	f := newPublicFixture(t)
+	if _, err := f.d.Writer.Exec(`UPDATE items SET comments_url = 'https://talk.example/t' WHERE dedup_key = 'a2'`); err != nil {
+		t.Fatal(err)
+	}
+	css := do(f.h, get("/static/style.css", "", nil))
+	if css.Code != http.StatusOK {
+		t.Fatalf("style.css status %d", css.Code)
+	}
+	for _, want := range []string{`.item h2 a[href^="http"]::after`, `.item-meta a[href^="http"]::after`, `content: "↗" / "";`} {
+		if !strings.Contains(css.Body.String(), want) {
+			t.Errorf("style.css missing %q", want)
+		}
+	}
+	body := do(f.h, get("/", "", nil)).Body.String()
+	for _, want := range []string{`<a href="https://a.example/2">`, `<a href="https://talk.example/t">discussion</a>`, fmt.Sprintf(`<a href="/feeds/%d">Alpha News</a>`, f.a.ID)} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Contains(body, "target=") {
+		t.Error("links must open in the same tab")
+	}
+}
+
 func TestAdminPageUX(t *testing.T) {
 	h, d := newTestServer(t, nil)
 	fd := seedFeed(t, d, "https://broken.example/"+strings.Repeat("x", 100))
