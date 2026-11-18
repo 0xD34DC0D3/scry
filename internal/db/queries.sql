@@ -121,6 +121,15 @@ SELECT f.id, f.url, f.title, f.site_url, f.disabled_at,
 FROM feeds f
 ORDER BY f.title = '', f.title COLLATE NOCASE, f.url;
 
+-- When a feed last posted: the item date is published_at, else first_seen_at,
+-- never later than first_seen_at (a feed can claim a future date). Items are
+-- never pruned, so this outlives the 30-day window. 0 when the feed has no
+-- items.
+-- name: GetFeedLastPostAt :one
+SELECT CAST(coalesce(max(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at)), 0) AS INTEGER) AS last_post_at
+FROM items i
+WHERE i.feed_id = ?;
+
 -- name: GetCatalogFeed :one
 SELECT id, url, title, site_url, disabled_at FROM feeds WHERE id = ?;
 

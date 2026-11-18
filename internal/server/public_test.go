@@ -281,7 +281,7 @@ func TestPublicPaging(t *testing.T) {
 					path = strings.ReplaceAll(m[1], "&amp;", "&")
 				}
 				// The end marker shows only where there is no Older link.
-				if hasEnd := strings.Contains(body, "end of 30 days"); hasEnd != (path == "") {
+				if hasEnd := strings.Contains(body, "everything from the last 30 days"); hasEnd != (path == "") {
 					t.Errorf("page %d: end marker %v with older %q", pages, hasEnd, path)
 				}
 			}

@@ -202,6 +202,23 @@ func (q *Queries) GetFeed(ctx context.Context, id int64) (Feed, error) {
 	return i, err
 }
 
+const getFeedLastPostAt = `-- name: GetFeedLastPostAt :one
+SELECT CAST(coalesce(max(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at)), 0) AS INTEGER) AS last_post_at
+FROM items i
+WHERE i.feed_id = ?
+`
+
+// When a feed last posted: the item date is published_at, else first_seen_at,
+// never later than first_seen_at (a feed can claim a future date). Items are
+// never pruned, so this outlives the 30-day window. 0 when the feed has no
+// items.
+func (q *Queries) GetFeedLastPostAt(ctx context.Context, feedID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getFeedLastPostAt, feedID)
+	var last_post_at int64
+	err := row.Scan(&last_post_at)
+	return last_post_at, err
+}
+
 const listCatalog = `-- name: ListCatalog :many
 SELECT f.id, f.url, f.title, f.site_url, f.disabled_at,
        (SELECT count(*) FROM items i

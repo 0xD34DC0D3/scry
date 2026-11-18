@@ -6,7 +6,55 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
+
+// A feed with nothing in the window says when it last posted, using the
+// item date (published_at, else first_seen_at, never after first_seen_at).
+func TestFeedLastPost(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	never := seedFeed(t, d, "https://never.example/feed")
+	dated := seedFeed(t, d, "https://dated.example/feed")
+	undated := seedFeed(t, d, "https://undated.example/feed")
+	future := seedFeed(t, d, "https://future.example/feed")
+
+	day := int64(24 * 60 * 60)
+	now := time.Now().Unix()
+	older := seedItemAt(t, d, dated.ID, "d1", "https://dated.example/1", "t", "", now-60*day)
+	newer := seedItemAt(t, d, dated.ID, "d2", "https://dated.example/2", "t", "", now-50*day)
+	seedItemAt(t, d, undated.ID, "u1", "https://undated.example/1", "t", "", now-45*day)
+	// A feed claiming a future date is clamped to when we saw it.
+	fut := seedItemAt(t, d, future.ID, "f1", "https://future.example/1", "t", "", now-35*day)
+	for id, pub := range map[int64]int64{older: now - 90*day, newer: now - 52*day, fut: now + 10*day} {
+		if _, err := d.Writer.Exec(`UPDATE items SET published_at = ? WHERE id = ?`, pub, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	date := func(unix int64) string { return time.Unix(unix, 0).UTC().Format("Jan 2, 2006") }
+	tests := []struct {
+		name string
+		id   int64
+		want string
+	}{
+		{"no items", never.ID, "This feed hasn't posted yet."},
+		// older published long ago, newer published before it was seen: the
+		// newest item date is newer's published_at.
+		{"published_at wins", dated.ID, `last post was <time datetime="` + time.Unix(now-52*day, 0).UTC().Format("2006-01-02T15:04:05Z") + `">` + date(now-52*day) + `</time>.`},
+		{"no published_at", undated.ID, date(now - 45*day)},
+		{"future published_at is clamped", future.ID, date(now - 35*day)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := do(h, get(fmt.Sprintf("/feeds/%d", tc.id), "", nil)).Body.String()
+			if !strings.Contains(body, tc.want) {
+				t.Errorf("missing %q in %s", tc.want, body)
+			}
+			if !strings.Contains(body, `<a href="/">See the latest from every feed</a>`) {
+				t.Error("lost the link to Latest")
+			}
+		})
+	}
+}
 
 // Error responses come through the layout as HTML and are never cacheable,
 // signed in or not.
@@ -122,9 +170,9 @@ func TestEmptyStates(t *testing.T) {
 		name, path, cookie string
 		want, not          []string
 	}{
-		{"latest anonymous", "/", "", []string{`class="empty"`, `href="/feeds">Browse the feeds</a>`}, []string{"end of 30 days"}},
+		{"latest anonymous", "/", "", []string{`class="empty"`, `href="/feeds">Browse the feeds</a>`}, []string{"everything from the last 30 days"}},
 		{"latest admin", "/", "admin", []string{`href="/admin/feeds">Manage feeds</a>`}, []string{"Browse the feeds"}},
-		{"feed", fmt.Sprintf("/feeds/%d", empty.ID), "", []string{`class="empty"`, `<a href="/">See the latest from every feed</a>`}, []string{"end of 30 days"}},
+		{"feed", fmt.Sprintf("/feeds/%d", empty.ID), "", []string{`class="empty"`, `<a href="/">See the latest from every feed</a>`}, []string{"everything from the last 30 days"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,7 +201,7 @@ func TestEmptyStates(t *testing.T) {
 
 func TestEndOfList(t *testing.T) {
 	f := newPublicFixture(t)
-	const end = `<li class="end">— end of 30 days —</li>`
+	const end = `<li class="end">That's everything from the last 30 days.</li>`
 	for _, p := range []string{"/", fmt.Sprintf("/feeds/%d", f.a.ID)} {
 		for name, hdr := range map[string]map[string]string{"full": nil, "fragment": hx} {
 			t.Run(p+" "+name, func(t *testing.T) {

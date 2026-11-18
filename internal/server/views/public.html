@@ -30,7 +30,7 @@
 {{define "item-list"}}{{if .Data.Items}}
 <ol class="items">{{template "items-page" .}}</ol>
 {{else if .Data.Feed}}
-<p class="empty">Nothing from this feed in the last 30 days. <a href="/">See the latest from every feed</a>.</p>
+<p class="empty">{{if not .Data.Feed.LastPost.IsZero}}Nothing in the last 30 days (lists only show that window); last post was <time datetime="{{.Data.Feed.LastPost.Format "2006-01-02T15:04:05Z"}}">{{.Data.Feed.LastPost.Format "Jan 2, 2006"}}</time>.{{else}}This feed hasn't posted yet.{{end}} <a href="/">See the latest from every feed</a>.</p>
 {{else if and .User .User.IsAdmin}}
 <p class="empty">Nothing in the last 30 days. <a href="/admin/feeds">Manage feeds</a>.</p>
 {{else}}
@@ -46,7 +46,7 @@
 {{end}}{{with .Data.Older}}
 <li class="more"><a class="btn" href="{{.}}" hx-get="{{.}}" hx-target="closest li" hx-swap="outerHTML">Older</a></li>
 {{else}}
-<li class="end">— end of 30 days —</li>
+<li class="end">That's everything from the last 30 days.</li>
 {{end}}{{end}}
 
 {{define "catalog"}}{{template "top" .}}

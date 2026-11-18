@@ -72,6 +72,7 @@ type feedView struct {
 	SiteURL     string
 	Paused      bool
 	RecentItems int64
+	LastPost    time.Time // zero when the feed has no items
 }
 
 type itemsData struct {
@@ -124,6 +125,14 @@ func older(path string, items []itemView) ([]itemView, string) {
 	}
 	last := pageSize - 1
 	return items[:pageSize], fmt.Sprintf("%s?before=%d-%d", path, items[last].Seen.Unix(), items[last].ID)
+}
+
+// lastPost converts a last_post_at column; 0 means no items.
+func lastPost(unix int64) time.Time {
+	if unix == 0 {
+		return time.Time{}
+	}
+	return time.Unix(unix, 0).UTC()
 }
 
 func since() int64 { return time.Now().Add(-window).Unix() }
@@ -232,6 +241,15 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 	}
 	fv := &feedView{ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl, Paused: f.DisabledAt.Valid}
 	fv.Heading = feedHeading(f.Title, f.Url)
+	// Only an empty window needs it: say when a quiet feed last posted.
+	if len(items) == 0 {
+		last, err := s.r.GetFeedLastPostAt(r.Context(), fid)
+		if err != nil {
+			s.internalError(w, r, "get feed last post", err)
+			return
+		}
+		fv.LastPost = lastPost(last)
+	}
 	d := itemsData{Feed: fv}
 	d.Items, d.Older = older(fmt.Sprintf("/feeds/%d", fid), items)
 	setCache(w, r)
