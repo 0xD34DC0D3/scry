@@ -117,7 +117,10 @@ LIMIT sqlc.arg(lim);
 -- name: ListCatalog :many
 SELECT f.id, f.url, f.title, f.site_url, f.disabled_at,
        (SELECT count(*) FROM items i
-        WHERE i.feed_id = f.id AND i.first_seen_at >= sqlc.arg(since)) AS recent_items
+        WHERE i.feed_id = f.id AND i.first_seen_at >= sqlc.arg(since)) AS recent_items,
+       -- Same item date as GetFeedLastPostAt; 0 when the feed has no items.
+       CAST(coalesce((SELECT max(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at))
+                      FROM items i WHERE i.feed_id = f.id), 0) AS INTEGER) AS last_post_at
 FROM feeds f
 ORDER BY f.title = '', f.title COLLATE NOCASE, f.url;
 

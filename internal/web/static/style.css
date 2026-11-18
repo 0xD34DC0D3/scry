@@ -1081,6 +1081,13 @@ main:has(> .auth) {
   color: var(--muted);
 }
 
+/* the catalog's site host under a feed name: a hint, not a second link */
+.site-host {
+  color: var(--muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
 /* long feed URLs and errors must wrap inside table cells */
 td code {
   overflow-wrap: anywhere;

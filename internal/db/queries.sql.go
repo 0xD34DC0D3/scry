@@ -222,7 +222,10 @@ func (q *Queries) GetFeedLastPostAt(ctx context.Context, feedID int64) (int64, e
 const listCatalog = `-- name: ListCatalog :many
 SELECT f.id, f.url, f.title, f.site_url, f.disabled_at,
        (SELECT count(*) FROM items i
-        WHERE i.feed_id = f.id AND i.first_seen_at >= ?1) AS recent_items
+        WHERE i.feed_id = f.id AND i.first_seen_at >= ?1) AS recent_items,
+       -- Same item date as GetFeedLastPostAt; 0 when the feed has no items.
+       CAST(coalesce((SELECT max(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at))
+                      FROM items i WHERE i.feed_id = f.id), 0) AS INTEGER) AS last_post_at
 FROM feeds f
 ORDER BY f.title = '', f.title COLLATE NOCASE, f.url
 `
@@ -234,6 +237,7 @@ type ListCatalogRow struct {
 	SiteUrl     string
 	DisabledAt  sql.NullInt64
 	RecentItems int64
+	LastPostAt  int64
 }
 
 // Every feed, paused ones included (shown as paused), untitled ones last.
@@ -253,6 +257,7 @@ func (q *Queries) ListCatalog(ctx context.Context, since int64) ([]ListCatalogRo
 			&i.SiteUrl,
 			&i.DisabledAt,
 			&i.RecentItems,
+			&i.LastPostAt,
 		); err != nil {
 			return nil, err
 		}

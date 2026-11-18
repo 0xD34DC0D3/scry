@@ -55,13 +55,13 @@
 {{with .Data}}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Feed</th><th>Posts (30 days)</th><th>Status</th></tr></thead>
+    <thead><tr><th>Feed</th><th>Last post</th><th>Posts (30 days)</th></tr></thead>
     <tbody>
     {{range .}}
       <tr>
-        <td data-label="Feed"><a href="/feeds/{{.ID}}">{{.Name}}</a>{{with .SiteURL}}<br><code>{{.}}</code>{{end}}</td>
+        <td data-label="Feed"><a href="/feeds/{{.ID}}">{{.Name}}</a>{{if .Paused}} <span class="badge off">paused</span>{{end}}{{with .SiteHost}}<br><span class="site-host">{{.}}</span>{{end}}</td>
+        <td data-label="Last post">{{if .LastPost.IsZero}}<span class="muted">never</span>{{else}}<time datetime="{{.LastPost.Format "2006-01-02T15:04:05Z"}}" title="{{.LastPost.Format "2006-01-02 15:04"}} UTC">{{.LastPostLabel}}</time>{{end}}</td>
         <td data-label="Posts (30 days)">{{.RecentItems}}</td>
-        <td data-label="Status">{{if .Paused}}<span class="badge off">paused</span>{{else}}<span class="badge">active</span>{{end}}</td>
       </tr>
     {{end}}
     </tbody>

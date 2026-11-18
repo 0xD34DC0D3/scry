@@ -73,6 +73,30 @@ type feedView struct {
 	Paused      bool
 	RecentItems int64
 	LastPost    time.Time // zero when the feed has no items
+	// Catalog only: SiteHost is SiteURL's host for display; LastPostLabel is
+	// LastPost as a short, human date.
+	SiteHost, LastPostLabel string
+}
+
+// shortAgo renders a date for a table cell: relative while it is recent
+// ("3 days ago" reads faster than a date), "Nov 12" later, with the year
+// once it is not this year's. Empty for a feed with no items.
+func shortAgo(t, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	days := int(now.Sub(t).Hours() / 24)
+	switch {
+	case days < 0 || days == 0:
+		return "today"
+	case days == 1:
+		return "yesterday"
+	case days < 14:
+		return fmt.Sprintf("%d days ago", days)
+	case t.Year() == now.Year():
+		return t.Format("Jan 2")
+	}
+	return t.Format("Jan 2, 2006")
 }
 
 type itemsData struct {
@@ -193,12 +217,15 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "list catalog", err)
 		return
 	}
+	now := time.Now().UTC()
 	feeds := make([]feedView, len(rows))
 	for i, f := range rows {
 		feeds[i] = feedView{
 			ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl,
 			Paused: f.DisabledAt.Valid, RecentItems: f.RecentItems,
+			SiteHost: domain(f.SiteUrl), LastPost: lastPost(f.LastPostAt),
 		}
+		feeds[i].LastPostLabel = shortAgo(feeds[i].LastPost, now)
 	}
 	setCache(w, r)
 	s.web.Render(w, r, web.View{Page: "catalog", Title: "Feeds", Data: feeds, Nav: "feeds"})

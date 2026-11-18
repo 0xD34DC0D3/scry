@@ -101,9 +101,11 @@ func TestPublicPages(t *testing.T) {
 			path: "/feeds",
 			want: []string{
 				`href="` + feedA + `">Alpha News</a>`, `href="` + feedB + `">https://b.example/feed</a>`,
-				"paused", "active",
+				// paused shows inline by the name; no Status column or "active" badge
+				`</a> <span class="badge off">paused</span>`, `<th>Last post</th>`,
+				`<span class="site-host">a.example</span>`, `data-label="Last post"`, `<time datetime=`, ` UTC">today</time>`,
 			},
-			not: []string{"FULLHTML"},
+			not: []string{"FULLHTML", "active", "<th>Status</th>", "<code>", "https://a.example/<"},
 		},
 		{
 			name: "feed",

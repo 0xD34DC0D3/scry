@@ -9,6 +9,49 @@ import (
 	"time"
 )
 
+func TestShortAgo(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		t    time.Time
+		want string
+	}{
+		{"never", time.Time{}, ""},
+		{"future (clock skew)", now.Add(time.Hour), "today"},
+		{"hours ago", now.Add(-3 * time.Hour), "today"},
+		{"yesterday", now.Add(-30 * time.Hour), "yesterday"},
+		{"days", now.Add(-5 * 24 * time.Hour), "5 days ago"},
+		{"two weeks is a date", now.Add(-14 * 24 * time.Hour), "Nov 3"},
+		{"this year", time.Date(2026, 1, 9, 0, 0, 0, 0, time.UTC), "Jan 9"},
+		{"earlier year", time.Date(2025, 12, 30, 0, 0, 0, 0, time.UTC), "Dec 30, 2025"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shortAgo(tc.t, now); got != tc.want {
+				t.Errorf("shortAgo = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The catalog's Last post column covers feeds whose items all left the
+// 30-day window, and feeds with none.
+func TestCatalogLastPost(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	quiet := seedFeed(t, d, "https://quiet.example/feed")
+	empty := seedFeed(t, d, "https://empty.example/feed")
+	seen := time.Now().Add(-100 * 24 * time.Hour).UTC()
+	seedItemAt(t, d, quiet.ID, "q1", "https://quiet.example/1", "t", "", seen.Unix())
+	body := do(h, get("/feeds", "", nil)).Body.String()
+	want := `<time datetime="` + seen.Format("2006-01-02T15:04:05Z") + `" title="` + seen.Format("2006-01-02 15:04") + ` UTC">` + shortAgo(seen, time.Now().UTC()) + `</time>`
+	if !strings.Contains(body, want) {
+		t.Errorf("missing %q in %s", want, body)
+	}
+	if n := strings.Count(body, `<span class="muted">never</span>`); n != 1 {
+		t.Errorf("feeds shown as never = %d, want 1 (%s)", n, fmt.Sprint(empty.ID))
+	}
+}
+
 // A feed with nothing in the window says when it last posted, using the
 // item date (published_at, else first_seen_at, never after first_seen_at).
 func TestFeedLastPost(t *testing.T) {
