@@ -1,0 +1,79 @@
+# scry design
+
+An RSS reader. Its first milestone is also the org's Go app template.
+
+## Stack
+
+- Go, SQLite (`modernc.org/sqlite`), goose, sqlc. Same setup as voodoo.
+- HTTP: stdlib `net/http` (`ServeMux` patterns), not echo.
+- `html/template` + htmx, voodoo's layout and CSS. Handlers return a full page, or a fragment on `HX-Request`.
+- Auth: voodoo session cookie or API key, via `/me`.
+- Jobs: Inngest Cloud.
+
+## Template (milestone 1)
+
+scry's first commit is the template: runnable, one example page, CI green, no feed code. After scry ships it moves to its own repo; new projects start from it with `gonew`.
+
+- `cmd/<app>` (`serve`, `migrate`, `doctor`) and `internal/`.
+- Env config, `SCRY_` prefix; refuse unsafe prod settings. `SCRY_PROD` defaults to true so a server missing it fails safe; `.env.example` turns it off.
+- SQLite: WAL, one writer plus a read pool. Goose migrations in `migrations/`, embedded; sqlc reads them as its schema.
+  Writer: `MaxOpenConns(1)`, `_txlock=immediate`. Reader: `mode=ro` (modernc supports it). sqlc output lives in `internal/db` beside `Open`; `doctor` fails on pending migrations.
+- HTTP: timeouts, body caps, `CrossOriginProtection`, security headers, `/healthz`.
+- voodoo auth middleware, `/me` cached 60 s. The only shared Go code: package `voodooauth` in voodoo's module (`github.com/0xD34DC0D3/voodoo/voodooauth`), stdlib only, plain `net/http` middleware. Everything else is copied.
+- Admin is voodoo's `is_admin`, via `RequireAdmin`; no local role table or option.
+- Web layout, CSS, vendored htmx. CSP bans inline script and style, so htmx runs with `includeIndicatorStyles` and `allowEval` off (meta tag); no `hx-on`.
+- Static files are fingerprinted (`?v=` hash): immutable cache when versioned, 1 h otherwise (fonts, loaded from the CSS).
+- Inngest client, `/api/inngest`, `jobs/`.
+  Inngest env vars keep the SDK's names (`INNGEST_*`), not `SCRY_`, since the SDK reads them itself; prod requires both keys and refuses `INNGEST_DEV`. `/api/inngest` skips CSRF and voodoo auth (signature-authenticated) and caps bodies at 36 MiB (Inngest's 32 MiB run-state limit plus headroom) instead of 64 KB.
+- Pinned tools, CI, govulncheck, `deploy.sh`, `backup.sh`, Caddyfile, systemd.
+  Deploy diverges from voodoo's in four ways: `install.sh` runs `scry doctor` (new binary, prod env) after `migrate up` and before installing it; the health check accepts any 2xx because scry's `/healthz` has an empty body; `ci-setup.sh` makes user `deploy-scry` (not `deploy`) so it does not overwrite voodoo's CI key on the shared droplet; the systemd unit leaves outbound HTTPS open (feeds, voodoo, Inngest Cloud). The CI deploy job stays dormant until the repository variable `DEPLOY_HOST` is set, and cannot build until the `../voodoo` replace goes (see Known issues).
+- `AGENTS.md`, `docs/design.md`, `docs/initial_milestone.md`.
+
+CI also checks: sqlc output is current, `queries.sql` is ASCII-only (see voodoo `sqlc.yaml`), migrations run up, down, up.
+
+Out: Antfly, MCP, GraphQL, anything app-specific.
+
+## Features
+
+- One feed catalog. Only admins add, pause, or remove feeds, or ask for a sync.
+- Users subscribe to feeds and have read/unread state.
+- Public view: latest items from all feeds, the catalog, and one feed's items. Excerpts only, linking out. Cached.
+- Logged-in view: subscribed items with full HTML. Looking good is a requirement.
+
+## Data
+
+- `feeds(id, url UNIQUE, title, site_url, etag, last_modified, next_fetch_at, fail_count, last_error, disabled_at)`
+- `items(id, feed_id, dedup_key, url, title, author, published_at, first_seen_at, UNIQUE(feed_id, dedup_key))`. Kept forever, so an old item is never re-added as new.
+- `item_contents(item_id PK, html, excerpt, fetched_at)`. Pruned after 30 days.
+- `subscriptions(user_id, feed_id, subscribed_at, read_before_at, PK(user_id, feed_id))`
+- `item_reads(user_id, item_id, read_at, PK(user_id, item_id))`. Pruned after 30 days.
+- Unread: `first_seen_at` after both `subscribed_at` and `read_before_at`, with no `item_reads` row. "Mark all read" moves `read_before_at`.
+- Lists use `first_seen_at`, not `published_at`. Views show the last 30 days.
+- `PRAGMA foreign_keys=ON` on every connection; deletes cascade.
+
+## Sync
+
+- `syncFeed {feed_id}` does everything for one feed. A cron function sends it for each due feed and moves that feed's `next_fetch_at` forward; admins can send it too.
+- Concurrency: 1 per feed, about 10 overall.
+- Conditional GET, 15 s timeout, 10 MB cap, User-Agent, private addresses refused (redirects included). Fetch and parse outside the transaction, then one short write. Steps return small values (ids, counts), never feed bodies: each Inngest call must finish inside `serve`'s 30 s write timeout and arrive inside its 10 s read timeout.
+- Upsert items by `dedup_key`: guid, else link, else hash of title and date. Content is rewritten on every fetch.
+- Success, including 304, resets `fail_count`. A failure counts up and backs `next_fetch_at` off, up to 24 h; after 10 the feed is disabled and shown to admins. Inngest retries cover only blips within one run.
+- HTML is sanitized on the way in (bluemonday `UGCPolicy`); the excerpt is plain text.
+- Pruning runs daily in batches.
+
+## Deferred
+
+- GraphQL (gqlgen), until a non-browser client needs it. Resolvers and htmx handlers would wrap the same code.
+- TypeScript template, same shape: env names, deploy scripts, docs, look.
+- Bookmarks: `bookmarks(user_id, item_id, created_at)`; pruning keeps their `item_contents`. Bookmarking any URL gives it an `items` row with no feed.
+- Image proxy, full-article extraction, OPML, search, user-suggested feeds.
+- `voodoo/user.deleted`: delete the user's rows.
+
+## Known issues
+
+- scry uses stdlib `net/http`; voodoo uses echo. Code copied from voodoo's server needs porting, not pasting.
+- scry's admin is voodoo's `is_admin`, though voodoo's README says `is_admin` is not an app role. Fine while one person runs everything; per-app roles would need a table.
+- Copies made from the template drift apart.
+- `go.mod` replaces voodoo with `../voodoo` until voodoo tags a version, so a scry-only checkout (CI) cannot build.
+- Images load directly from other sites, which see readers' IP addresses.
+- Feeds whose guids change on every fetch produce duplicates.
