@@ -153,7 +153,7 @@ func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, v View) {
 	if err := r.t.ExecuteTemplate(&buf, name, p); err != nil {
 		slog.Error("render", "template", name, "err", err)
 		// The handler may have marked the page cacheable; an error must not be.
-		w.Header().Del("Cache-Control")
+		w.Header().Set("Cache-Control", "no-store")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -165,10 +165,11 @@ func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, v View) {
 }
 
 // Error renders the layout's error page: status, its standard text as the
-// heading, and msg below it. Any Cache-Control the handler set is dropped,
-// so an error is never stored. htmx requests get the full page too; htmx
+// heading, and msg below it. It is no-store, replacing whatever the handler
+// set: the page names the signed-in user, and only public pages Vary on
+// Cookie, so no cache may keep it. htmx requests get the full page too; htmx
 // does not swap 4xx or 5xx responses by default anyway.
 func (r *Renderer) Error(w http.ResponseWriter, req *http.Request, status int, msg string) {
-	w.Header().Del("Cache-Control")
+	w.Header().Set("Cache-Control", "no-store")
 	r.Render(w, req, View{Page: "error", Title: http.StatusText(status), Data: msg, Status: status})
 }

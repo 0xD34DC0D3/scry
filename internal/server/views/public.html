@@ -42,9 +42,9 @@
 </li>
 {{end}}{{with .Data.Older}}
 <li class="more"><a class="btn" href="{{.}}" hx-get="{{.}}" hx-target="closest li" hx-swap="outerHTML">Older</a></li>
-{{else}}{{if .Data.Items}}
+{{else}}
 <li class="end">— end of 30 days —</li>
-{{end}}{{end}}{{end}}
+{{end}}{{end}}
 
 {{define "catalog"}}{{template "top" .}}
 <h1>Feeds</h1>

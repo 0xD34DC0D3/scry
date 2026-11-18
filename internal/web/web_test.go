@@ -24,8 +24,8 @@ func TestRenderErrorIsCleanly500(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "partial") {
 		t.Errorf("partial output leaked: %q", rec.Body.String())
 	}
-	if cc := rec.Header().Get("Cache-Control"); cc != "" {
-		t.Errorf("Cache-Control = %q, want none", cc)
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
 	if rec.Header().Get("Vary") != "HX-Request" {
 		t.Errorf("Vary = %q", rec.Header().Get("Vary"))

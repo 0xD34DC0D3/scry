@@ -64,8 +64,8 @@ func New(d *db.DB, auth *voodooauth.Client, jc inngestgo.Client, siteURL string)
 	return chain(recordRoute(mux), requestLogger, securityHeaders, recoverer(s.panicPage), limitBody, crossOrigin, skipJobs(auth.Middleware))
 }
 
-// Error responses go through the layout. web.Renderer.Error drops any
-// Cache-Control the handler set, so none of these is ever stored.
+// Error responses go through the layout. web.Renderer.Error makes them
+// no-store, replacing any Cache-Control the handler set, so none is stored.
 
 func (s *server) notFound(w http.ResponseWriter, r *http.Request) {
 	s.web.Error(w, r, http.StatusNotFound, "There is nothing at this address.")

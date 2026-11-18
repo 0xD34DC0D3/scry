@@ -201,8 +201,8 @@ func TestPublicCacheHeaders(t *testing.T) {
 			})
 		}
 	}
-	// An error is never marked cacheable.
-	if cc := do(f.h, get("/feeds/999999", "", nil)).Header().Get("Cache-Control"); cc != "" {
+	// An error is never stored.
+	if cc := do(f.h, get("/feeds/999999", "", nil)).Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("404 Cache-Control = %q", cc)
 	}
 }

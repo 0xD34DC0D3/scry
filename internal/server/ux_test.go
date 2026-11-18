@@ -45,8 +45,8 @@ func checkErrorPage(t *testing.T, code int, h http.Header, body string, want int
 	if ct := h.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("Content-Type = %q", ct)
 	}
-	if cc := h.Get("Cache-Control"); cc != "" {
-		t.Errorf("Cache-Control = %q, want none", cc)
+	if cc := h.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
 	for _, w := range []string{"<html", "<h1>" + http.StatusText(want) + "</h1>", `<nav aria-label="Main">`, `href="/">Back to scry</a>`} {
 		if !strings.Contains(body, w) {
@@ -162,6 +162,14 @@ func TestEndOfList(t *testing.T) {
 				}
 			})
 		}
+		// Items aged out between Older clicks: the empty fragment still
+		// ends the list instead of swapping in nothing.
+		t.Run(p+" empty fragment", func(t *testing.T) {
+			rec := do(f.h, get(p+"?before=1-1", "", hx))
+			if body := rec.Body.String(); rec.Code != http.StatusOK || strings.Contains(body, `class="item"`) || !strings.Contains(body, end) {
+				t.Errorf("status %d, body: %s", rec.Code, body)
+			}
+		})
 	}
 }
 
