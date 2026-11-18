@@ -90,12 +90,14 @@ func New(app string, pages fs.FS, auth *voodooauth.Client) *Renderer {
 }
 
 // View describes one response. Page is the full-page template, Fragment the
-// block that alone replaces part of the page for an htmx request.
+// block that alone replaces part of the page for an htmx request. Status is
+// the HTTP status, 200 when zero.
 type View struct {
 	Page     string
 	Fragment string
 	Title    string
 	Data     any
+	Status   int
 }
 
 // page is what templates see: layout fields plus the handler's Data. User
@@ -130,5 +132,8 @@ func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, v View) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if v.Status != 0 {
+		w.WriteHeader(v.Status)
+	}
 	_, _ = buf.WriteTo(w)
 }

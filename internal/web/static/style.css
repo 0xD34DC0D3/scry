@@ -962,10 +962,3 @@ main:has(> .auth) {
     left: 0;
   }
 }
-
-/* EXAMPLE notes list timestamps */
-.notes .dim {
-  color: var(--muted);
-  font: 0.75rem var(--mono);
-  margin-left: 0.5rem;
-}

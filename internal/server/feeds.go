@@ -1,0 +1,145 @@
+package server
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/0xD34DC0D3/scry/internal/db"
+	"github.com/0xD34DC0D3/scry/internal/web"
+)
+
+// maxFeedURL caps a feed URL in bytes.
+const maxFeedURL = 2048
+
+const feedsPath = "/admin/feeds"
+
+// The feed catalog: admins list, add, pause, resume and remove feeds. scry's
+// admins are voodoo's (is_admin); there is no local role table.
+func (s *server) feedRoutes(mux *http.ServeMux) {
+	admin := func(h http.HandlerFunc) http.Handler { return s.auth.RequireAdmin(h) }
+	mux.Handle("GET "+feedsPath, admin(s.feedsPage))
+	mux.Handle("POST "+feedsPath, admin(s.addFeed))
+	// POST, not DELETE, so the remove button works as a plain form.
+	mux.Handle("POST "+feedsPath+"/{id}/pause", admin(s.feedAction((*db.Queries).PauseFeed)))
+	mux.Handle("POST "+feedsPath+"/{id}/resume", admin(s.feedAction((*db.Queries).ResumeFeed)))
+	mux.Handle("POST "+feedsPath+"/{id}/remove", admin(s.feedAction((*db.Queries).DeleteFeed)))
+}
+
+type feedsData struct {
+	Feeds []db.Feed
+	URL   string // the add form's value, kept when it was rejected
+	Error string
+}
+
+func (s *server) renderFeeds(w http.ResponseWriter, r *http.Request, d feedsData, status int) {
+	feeds, err := s.r.ListFeeds(r.Context())
+	if err != nil {
+		internalError(w, "list feeds", err)
+		return
+	}
+	d.Feeds = feeds
+	v := web.View{Page: "feeds", Fragment: "feeds-panel", Title: "Feeds", Data: d}
+	// htmx swaps only 2xx responses by default, so a rejected add answers it
+	// with 200 and the error inside the fragment; a plain post gets the 4xx.
+	if r.Header.Get("HX-Request") != "true" {
+		v.Status = status
+	}
+	s.web.Render(w, r, v)
+}
+
+func (s *server) feedsPage(w http.ResponseWriter, r *http.Request) {
+	s.renderFeeds(w, r, feedsData{}, http.StatusOK)
+}
+
+// done answers a successful action: the fresh panel for htmx, otherwise
+// post/redirect/get so a reload does not repost.
+func (s *server) done(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, feedsPath, http.StatusSeeOther)
+		return
+	}
+	s.renderFeeds(w, r, feedsData{}, http.StatusOK)
+}
+
+func (s *server) addFeed(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	raw := strings.TrimSpace(r.PostFormValue("url"))
+	u, msg := normalizeFeedURL(raw)
+	if msg != "" {
+		s.renderFeeds(w, r, feedsData{URL: raw, Error: msg}, http.StatusBadRequest)
+		return
+	}
+	if _, err := s.w.CreateFeed(r.Context(), u); err != nil {
+		// ON CONFLICT DO NOTHING returns no row for a URL already stored.
+		if errors.Is(err, sql.ErrNoRows) {
+			s.renderFeeds(w, r, feedsData{URL: raw, Error: "That feed is already in the catalog."}, http.StatusConflict)
+			return
+		}
+		internalError(w, "create feed", err)
+		return
+	}
+	s.done(w, r)
+}
+
+// feedAction runs a by-id write; zero rows affected means no such feed
+// (removed meanwhile, say), answered with the fresh panel and an error.
+func (s *server) feedAction(q func(*db.Queries, context.Context, int64) (int64, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		n, err := q(s.w, r.Context(), id)
+		if err != nil {
+			internalError(w, "feed action", err)
+			return
+		}
+		if n == 0 {
+			s.renderFeeds(w, r, feedsData{Error: "That feed no longer exists."}, http.StatusNotFound)
+			return
+		}
+		s.done(w, r)
+	}
+}
+
+// normalizeFeedURL returns the form stored in feeds.url, or a message for
+// the admin. Private addresses are not checked here: the fetcher refuses
+// them on every request, redirects included.
+func normalizeFeedURL(raw string) (string, string) {
+	const want = "Enter an absolute http or https URL, such as https://example.com/feed.xml."
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return "", want
+	}
+	if u.User != nil {
+		return "", "Remove the user name or password from the URL."
+	}
+	// url.Parse already lowercases the scheme.
+	u.Host = strings.ToLower(u.Host)
+	// Checked after encoding, which can grow the URL (a space becomes %20).
+	normalized := u.String()
+	if len(normalized) > maxFeedURL {
+		return "", "That URL is too long (at most 2048 bytes once encoded)."
+	}
+	return normalized, ""
+}
+
+func internalError(w http.ResponseWriter, what string, err error) {
+	slog.Error(what, "err", err)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
+}

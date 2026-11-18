@@ -50,6 +50,10 @@ Out: Antfly, MCP, GraphQL, anything app-specific.
 - Unread: `first_seen_at` after both `subscribed_at` and `read_before_at`, with no `item_reads` row. "Mark all read" moves `read_before_at`.
 - Lists use `first_seen_at`, not `published_at`. Views show the last 30 days.
 - `PRAGMA foreign_keys=ON` on every connection; deletes cascade.
+- `disabled_at` is the one "not fetched" flag: an admin pause and the auto-disable after 10 failures both set it, and the catalog shows either as paused. Resume clears it, resets `fail_count` and `last_error`, and sets `next_fetch_at` to 0 so the feed is due at once (a new feed starts the same way).
+- Unknown text is `''`, not NULL; `disabled_at` and `published_at` are nullable. Indexes beyond keys: `items(first_seen_at)`, `items(feed_id, first_seen_at)`, and `subscriptions(feed_id)`, `item_reads(item_id)` for the cascades.
+- Migration `00001` (the template's notes table) stays because production applied it; `00002` drops the table and `00003` creates the schema.
+- Feed URLs are trimmed, must be absolute http(s) with a host and no userinfo, at most 2048 bytes after encoding, and are stored with scheme and host lowercased. Adding does not fetch; private addresses are refused by the fetcher (step 3), not at add time.
 
 ## Sync
 
@@ -81,3 +85,4 @@ Out: Antfly, MCP, GraphQL, anything app-specific.
 - Feeds whose guids change on every fetch produce duplicates.
 - Inngest sync is manual from the dashboard: inngestgo v0.16+ refuses unsigned `PUT /api/inngest` unless `INNGEST_ENABLE_UNAUTHED_SYNC` is set. Enabling it would also need `ServeOrigin` pinned to `SCRY_BASE_URL`, or the synced URL comes from the Host header.
 - Production has no off-box backups yet (`/etc/scry/backup.env` absent); deploys take a local copy only.
+- Feed URL dedup folds only scheme and host case; `:443`, a trailing dot, `#fragment`, or IDN vs punycode variants store the same feed twice.

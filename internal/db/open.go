@@ -12,7 +12,7 @@ import (
 	"errors"
 	"fmt"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
 
 // DB holds two handles on the same file. Use Writer for anything that

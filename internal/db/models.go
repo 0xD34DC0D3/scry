@@ -4,8 +4,19 @@
 
 package db
 
-type Note struct {
-	ID        int64
-	Body      string
-	CreatedAt int64
+import (
+	"database/sql"
+)
+
+type Feed struct {
+	ID           int64
+	Url          string
+	Title        string
+	SiteUrl      string
+	Etag         string
+	LastModified string
+	NextFetchAt  int64
+	FailCount    int64
+	LastError    string
+	DisabledAt   sql.NullInt64
 }

@@ -1,0 +1,6 @@
+{{/* Placeholder until step 5 builds the public views. */}}
+{{define "home"}}{{template "top" .}}
+<h1>scry</h1>
+<p>An RSS reader. Nothing to read here yet.</p>
+{{if and .User .User.IsAdmin}}<p><a href="/admin/feeds">Manage feeds</a></p>{{end}}
+{{template "bottom" .}}{{end}}

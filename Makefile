@@ -60,7 +60,7 @@ sqlc:
 
 migrate-new:
 	@test -n "$(NAME)" || (echo "usage: make migrate-new NAME=add_thing" && exit 1)
-	goose -dir migrations create $(NAME) sql
+	goose -dir migrations -s create $(NAME) sql
 
 # Up with scry itself (exercises the embedded FS), reset with the goose CLI
 # (runs every Down), then up again: proves each Down really undoes its Up.

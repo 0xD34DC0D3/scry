@@ -25,6 +25,8 @@ RSS reader in Go, and the source of the org's Go app template. Spec:
 - `internal/db.Open` gives `Writer` (one connection, immediate txlock) and `Reader` (read-only pool). Writes and migrations go through `Writer`.
 - Schema lives only in `migrations/` (goose, embedded). Each needs a working `-- +goose Down`; `make migrate-check` proves it.
 - Queries go in `internal/db/queries.sql`, ASCII only (see `sqlc.yaml`). Run `make sqlc` and commit the generated code; CI fails if it is stale.
+- Never edit or delete an applied migration (prod has run them all); undo with a new one, as `00002` drops `00001`'s notes table. Numbering is sequential (`00003_feeds.sql`).
+- Times are INTEGER unix seconds.
 
 ## HTTP and web
 
@@ -32,15 +34,15 @@ RSS reader in Go, and the source of the org's Go app template. Spec:
 - `internal/web`: layout, CSS, fonts, vendored htmx (version and sha256 in `web.go`). `make theme` regenerates `theme.css` from `../website`; do not edit it.
 - Render pages with `web.Renderer.Render` and a `web.View{Page, Fragment, ...}`: full page, or the fragment on `HX-Request`. Every htmx action must also work as a plain form post (POST, 303 redirect).
 - CSP forbids inline script and style: no `hx-on`, no `<script>` bodies, no `style=`. htmx is configured by the `htmx-config` meta tag in `layout.html`.
-- The notes and admin pages (`internal/server/example.go`, `views/notes.html`, `views/admin.html`) are EXAMPLES; step 2 deletes them.
+- Admin feed catalog: `internal/server/feeds.go`, `views/feeds.html`, under `/admin/feeds` behind `RequireAdmin`. Actions are POST (remove too, so plain forms work). htmx gets the `feeds-panel` fragment; a rejected add answers htmx with 200 and the error inside the fragment (htmx does not swap 4xx), and a plain post with the full page and 400/409. Set `web.View.Status` for a non-200 page.
+- `/` is a placeholder until step 5.
 
 ## Jobs
 
-- `internal/jobs`: Inngest Go SDK (`inngestgo`), app ID `scry`. `jobs.New(jobs.Deps{...})` creates the client and registers every function; functions get the DB from `Deps`, no globals. Put writes inside `step.Run`.
+- `internal/jobs`: Inngest Go SDK (`inngestgo`), app ID `scry`. `jobs.New(jobs.Deps{...})` creates the client and registers every function (in `register`; none until step 3); functions get the DB from `Deps`, no globals. Put writes inside `step.Run`.
 - The SDK handler is mounted at `/api/inngest` (`jobs.Path`). It skips CSRF and voodoo auth (Inngest signs its requests) and has a 36 MiB body cap instead of 64 KB.
 - Config is the SDK's own env vars (`INNGEST_SIGNING_KEY`, `INNGEST_EVENT_KEY`, `INNGEST_DEV`), not `SCRY_`. Prod requires both keys and refuses `INNGEST_DEV`.
 - Local dev: `INNGEST_DEV=1` in `.env`, then `npx inngest-cli@latest dev -u http://localhost:8081/api/inngest`; the UI is at http://localhost:8288.
-- The `scry/example.ping` and hourly notes-count functions and the admin "Send" button on `/` are EXAMPLES; step 2 deletes them.
 
 ## Auth
 

@@ -9,44 +9,67 @@ import (
 	"context"
 )
 
-const countNotes = `-- name: CountNotes :one
-SELECT count(*) FROM notes
+const createFeed = `-- name: CreateFeed :one
+INSERT INTO feeds (url) VALUES (?) ON CONFLICT (url) DO NOTHING RETURNING id, url, title, site_url, etag, last_modified, next_fetch_at, fail_count, last_error, disabled_at
 `
 
-func (q *Queries) CountNotes(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countNotes)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const createNote = `-- name: CreateNote :one
-
-INSERT INTO notes (body) VALUES (?) RETURNING id, body, created_at
-`
-
-// EXAMPLE queries against the example notes table; step 2 replaces them.
-func (q *Queries) CreateNote(ctx context.Context, body string) (Note, error) {
-	row := q.db.QueryRowContext(ctx, createNote, body)
-	var i Note
-	err := row.Scan(&i.ID, &i.Body, &i.CreatedAt)
+func (q *Queries) CreateFeed(ctx context.Context, url string) (Feed, error) {
+	row := q.db.QueryRowContext(ctx, createFeed, url)
+	var i Feed
+	err := row.Scan(
+		&i.ID,
+		&i.Url,
+		&i.Title,
+		&i.SiteUrl,
+		&i.Etag,
+		&i.LastModified,
+		&i.NextFetchAt,
+		&i.FailCount,
+		&i.LastError,
+		&i.DisabledAt,
+	)
 	return i, err
 }
 
-const listNotes = `-- name: ListNotes :many
-SELECT id, body, created_at FROM notes ORDER BY id DESC LIMIT ?
+const deleteFeed = `-- name: DeleteFeed :execrows
+DELETE FROM feeds WHERE id = ?
 `
 
-func (q *Queries) ListNotes(ctx context.Context, limit int64) ([]Note, error) {
-	rows, err := q.db.QueryContext(ctx, listNotes, limit)
+func (q *Queries) DeleteFeed(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteFeed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const listFeeds = `-- name: ListFeeds :many
+
+SELECT id, url, title, site_url, etag, last_modified, next_fetch_at, fail_count, last_error, disabled_at FROM feeds ORDER BY id
+`
+
+// Feed catalog (admin).
+func (q *Queries) ListFeeds(ctx context.Context) ([]Feed, error) {
+	rows, err := q.db.QueryContext(ctx, listFeeds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Note{}
+	items := []Feed{}
 	for rows.Next() {
-		var i Note
-		if err := rows.Scan(&i.ID, &i.Body, &i.CreatedAt); err != nil {
+		var i Feed
+		if err := rows.Scan(
+			&i.ID,
+			&i.Url,
+			&i.Title,
+			&i.SiteUrl,
+			&i.Etag,
+			&i.LastModified,
+			&i.NextFetchAt,
+			&i.FailCount,
+			&i.LastError,
+			&i.DisabledAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -58,4 +81,32 @@ func (q *Queries) ListNotes(ctx context.Context, limit int64) ([]Note, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const pauseFeed = `-- name: PauseFeed :execrows
+UPDATE feeds SET disabled_at = coalesce(disabled_at, unixepoch()) WHERE id = ?
+`
+
+// Pausing an already paused or auto-disabled feed keeps its original time.
+func (q *Queries) PauseFeed(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pauseFeed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const resumeFeed = `-- name: ResumeFeed :execrows
+UPDATE feeds
+SET disabled_at = NULL, fail_count = 0, last_error = '', next_fetch_at = 0
+WHERE id = ?
+`
+
+// Resume also clears the failure state and makes the feed due at once.
+func (q *Queries) ResumeFeed(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, resumeFeed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

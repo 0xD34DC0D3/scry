@@ -96,6 +96,8 @@ not configured yet.
   catalog.
 - Admin pages: add, pause, resume, remove a feed. Remove the example
   migration, query, page, and job from step 1.
+- Migration `00001` stays because production applied it; `00002` drops its
+  table (see `design.md`).
 
 Done: an admin adds a feed URL in the browser and sees it listed; a
 non-admin cannot.

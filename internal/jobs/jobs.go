@@ -7,11 +7,9 @@
 package jobs
 
 import (
-	"context"
 	"log/slog"
 
 	"github.com/inngest/inngestgo"
-	"github.com/inngest/inngestgo/step"
 
 	"github.com/0xD34DC0D3/scry/internal/db"
 )
@@ -51,52 +49,8 @@ func New(d Deps) (inngestgo.Client, error) {
 	return c, nil
 }
 
-// EXAMPLE functions: show an event function writing through the Writer
-// inside a step, and a cron reading through the Reader. Step 2 deletes them
-// with the notes table.
-
-// PingEvent is sent by the admin button on the notes page.
-const PingEvent = "scry/example.ping"
-
-// PingData is empty: the event itself is the message.
-type PingData struct{}
-
-// SendPing sends the EXAMPLE event.
-func SendPing(ctx context.Context, c inngestgo.Client) error {
-	_, err := c.Send(ctx, inngestgo.GenericEvent[PingData]{Name: PingEvent, Data: PingData{}})
-	return err
-}
-
+// register adds every function to c. There are none yet; step 3 adds
+// syncFeed here.
 func (d Deps) register(c inngestgo.Client) error {
-	if _, err := inngestgo.CreateFunction(c,
-		inngestgo.FunctionOpts{ID: "example-ping", Name: "EXAMPLE: ping adds a note"},
-		inngestgo.EventTrigger(PingEvent, nil),
-		d.ping,
-	); err != nil {
-		return err
-	}
-	_, err := inngestgo.CreateFunction(c,
-		inngestgo.FunctionOpts{ID: "example-count-notes", Name: "EXAMPLE: log the notes count"},
-		inngestgo.CronTrigger("0 * * * *"),
-		d.countNotes,
-	)
-	return err
-}
-
-// ping adds one note. The write is in a step so a retry after a later
-// failure replays its recorded result instead of adding a second note.
-func (d Deps) ping(ctx context.Context, _ inngestgo.Input[PingData]) (any, error) {
-	return step.Run(ctx, "add-note", func(ctx context.Context) (int64, error) {
-		n, err := d.W.CreateNote(ctx, "EXAMPLE: added by the "+PingEvent+" job")
-		return n.ID, err
-	})
-}
-
-func (d Deps) countNotes(ctx context.Context, _ inngestgo.Input[any]) (any, error) {
-	n, err := d.R.CountNotes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	slog.Info("example cron: notes", "count", n)
-	return n, nil
+	return nil
 }

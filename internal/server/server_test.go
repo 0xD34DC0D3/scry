@@ -47,11 +47,19 @@ const testBaseURL = "https://scry.example.com"
 // INNGEST_DEV keeps the SDK from demanding a signing key.
 func newTestHandler(t *testing.T) http.Handler {
 	t.Helper()
-	return newTestHandlerWith(t, nil)
+	h, _ := newTestServer(t, nil)
+	return h
 }
 
 // newTestHandlerWith uses jc as the jobs client, or the real one when nil.
 func newTestHandlerWith(t *testing.T, jc inngestgo.Client) http.Handler {
+	t.Helper()
+	h, _ := newTestServer(t, jc)
+	return h
+}
+
+// newTestServer also returns the migrated DB behind the handler.
+func newTestServer(t *testing.T, jc inngestgo.Client) (http.Handler, *db.DB) {
 	t.Helper()
 	auth := voodooauth.New(fakeVoodoo(t))
 	auth.AppURL = testBaseURL
@@ -73,7 +81,7 @@ func newTestHandlerWith(t *testing.T, jc inngestgo.Client) http.Handler {
 			t.Fatal(err)
 		}
 	}
-	return New(d, auth, jc)
+	return New(d, auth, jc), d
 }
 
 func withCookie(req *http.Request, v string) *http.Request {
@@ -87,14 +95,21 @@ func do(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-func postNote(body string, hdr map[string]string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, "/notes", strings.NewReader(url.Values{"body": {body}}.Encode()))
+// postForm posts form values as the given voodoo cookie ("" for none).
+func postForm(path string, vals url.Values, cookie string, hdr map[string]string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(vals.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	withCookie(req, "user")
+	if cookie != "" {
+		withCookie(req, cookie)
+	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
 	return req
+}
+
+func addFeedReq(u string, hdr map[string]string) *http.Request {
+	return postForm(feedsPath, url.Values{"url": {u}}, "admin", hdr)
 }
 
 func TestHealthz(t *testing.T) {
@@ -104,73 +119,10 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-func TestFullPageVsFragment(t *testing.T) {
-	h := newTestHandler(t)
-	if rec := do(h, postNote("hello", nil)); rec.Code != http.StatusSeeOther {
-		t.Fatalf("seed post = %d", rec.Code)
-	}
-
-	for _, tc := range []struct {
-		name     string
-		hx       string
-		wantFull bool
-	}{
-		{"browser", "", true},
-		{"htmx", "true", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			if tc.hx != "" {
-				req.Header.Set("HX-Request", tc.hx)
-			}
-			rec := do(h, req)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d", rec.Code)
-			}
-			body := rec.Body.String()
-			if !strings.Contains(body, "hello") {
-				t.Errorf("note missing from body: %s", body)
-			}
-			if got := strings.Contains(body, "<html"); got != tc.wantFull {
-				t.Errorf("full layout present = %v, want %v", got, tc.wantFull)
-			}
-			if !strings.Contains(body, `id="notes-panel"`) {
-				t.Error("fragment block missing")
-			}
-			if !strings.Contains(rec.Header().Get("Vary"), "HX-Request") {
-				t.Errorf("Vary = %q, want HX-Request", rec.Header().Get("Vary"))
-			}
-		})
-	}
-}
-
-func TestHTMXPostReturnsFragment(t *testing.T) {
-	h := newTestHandler(t)
-	rec := do(h, postNote("via htmx", map[string]string{"HX-Request": "true"}))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	body := rec.Body.String()
-	if strings.Contains(body, "<html") || !strings.Contains(body, "via htmx") {
-		t.Errorf("want fragment containing the new note, got: %s", body)
-	}
-}
-
-func TestNoJSPostRedirects(t *testing.T) {
-	h := newTestHandler(t)
-	rec := do(h, postNote("plain", nil))
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
-		t.Fatalf("got %d Location=%q, want 303 /", rec.Code, rec.Header().Get("Location"))
-	}
-	if !strings.Contains(do(h, httptest.NewRequest(http.MethodGet, "/", nil)).Body.String(), "plain") {
-		t.Error("note not listed after redirect")
-	}
-}
-
 func TestSecurityHeaders(t *testing.T) {
 	h := newTestHandler(t)
 	// Also on a 404 and on a rejected cross-origin post: headers wrap everything.
-	cross := postNote("x", map[string]string{"Sec-Fetch-Site": "cross-site"})
+	cross := addFeedReq("https://x.example/feed", map[string]string{"Sec-Fetch-Site": "cross-site"})
 	for name, req := range map[string]*http.Request{
 		"page":    httptest.NewRequest(http.MethodGet, "/", nil),
 		"static":  httptest.NewRequest(http.MethodGet, "/static/style.css", nil),
@@ -209,13 +161,13 @@ func TestCrossOriginPostRejected(t *testing.T) {
 		"origin":         {"Origin": "https://evil.example"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if rec := do(h, postNote("x", hdr)); rec.Code != http.StatusForbidden {
+			if rec := do(h, addFeedReq("https://x.example/feed", hdr)); rec.Code != http.StatusForbidden {
 				t.Errorf("status = %d, want 403", rec.Code)
 			}
 		})
 	}
 	// Same-origin browser post is allowed.
-	ok := postNote("fine", map[string]string{"Sec-Fetch-Site": "same-origin"})
+	ok := addFeedReq("https://fine.example/feed", map[string]string{"Sec-Fetch-Site": "same-origin"})
 	if rec := do(h, ok); rec.Code != http.StatusSeeOther {
 		t.Errorf("same-origin status = %d, want 303", rec.Code)
 	}
@@ -223,7 +175,7 @@ func TestCrossOriginPostRejected(t *testing.T) {
 
 func TestOversizedBodyRejected(t *testing.T) {
 	h := newTestHandler(t)
-	rec := do(h, postNote(strings.Repeat("a", maxBody+1), nil))
+	rec := do(h, addFeedReq(strings.Repeat("a", maxBody+1), nil))
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("status = %d, want 413", rec.Code)
 	}
@@ -264,24 +216,21 @@ func TestAuth(t *testing.T) {
 			t.Errorf("want login link only, got: %s", body)
 		}
 	})
-	t.Run("anonymous post 401", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/notes", strings.NewReader("body=x"))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		if rec := do(h, req); rec.Code != http.StatusUnauthorized {
-			t.Errorf("status = %d, want 401", rec.Code)
+	t.Run("admin link on home", func(t *testing.T) {
+		if !strings.Contains(do(h, page("/", "admin")).Body.String(), `href="/admin/feeds"`) {
+			t.Error("admin home lacks the catalog link")
+		}
+		for _, c := range []string{"user", ""} {
+			if strings.Contains(do(h, page("/", c)).Body.String(), `href="/admin/feeds"`) {
+				t.Errorf("cookie %q sees the catalog link", c)
+			}
 		}
 	})
-	t.Run("admin page", func(t *testing.T) {
-		if rec := do(h, page("/admin", "admin")); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "admin@example.com") {
-			t.Errorf("admin: %d", rec.Code)
-		}
-		if rec := do(h, page("/admin", "user")); rec.Code != http.StatusForbidden {
-			t.Errorf("non-admin: %d, want 403", rec.Code)
-		}
-		rec := do(h, page("/admin", ""))
+	t.Run("anonymous browser redirect", func(t *testing.T) {
+		rec := do(h, page(feedsPath, ""))
 		loc := rec.Header().Get("Location")
 		// next= comes from SCRY_BASE_URL, not the request's Host.
-		if rec.Code != http.StatusFound || !strings.HasSuffix(loc, "/login?next="+url.QueryEscape(testBaseURL+"/admin")) {
+		if rec.Code != http.StatusFound || !strings.HasSuffix(loc, "/login?next="+url.QueryEscape(testBaseURL+feedsPath)) {
 			t.Errorf("anonymous: %d Location=%q", rec.Code, loc)
 		}
 	})
@@ -296,10 +245,10 @@ func TestLoggedRouteSurvivesAuth(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	do(h, withCookie(httptest.NewRequest(http.MethodGet, "/admin", nil), "admin"))
+	do(h, withCookie(httptest.NewRequest(http.MethodGet, feedsPath, nil), "admin"))
 	do(h, httptest.NewRequest(http.MethodGet, "/nope", nil))
 	out := buf.String()
-	if !strings.Contains(out, `route="GET /admin"`) {
+	if !strings.Contains(out, `route="GET /admin/feeds"`) {
 		t.Errorf("route missing from log: %s", out)
 	}
 	if !strings.Contains(out, "route=unmatched") || strings.Contains(out, "/nope") {

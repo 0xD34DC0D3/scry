@@ -1,0 +1,60 @@
+{{/* Admin feed catalog. "feeds-panel" is the fragment every htmx action
+     swaps in; it includes the add form so the input clears after an add. */}}
+{{define "feeds"}}{{template "top" .}}
+<h1>Feeds</h1>
+{{template "feeds-panel" .}}
+{{template "bottom" .}}{{end}}
+
+{{define "feeds-panel"}}<div id="feeds-panel">
+  {{with .Data.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+  <form method="post" action="/admin/feeds" hx-post="/admin/feeds" hx-target="#feeds-panel" hx-swap="outerHTML">
+    <div class="form-row">
+      <label>
+        <span>Feed URL</span>
+        <input name="url" type="url" required maxlength="2048" autocomplete="off" value="{{.Data.URL}}">
+      </label>
+      <button type="submit">Add</button>
+    </div>
+  </form>
+  {{with .Data.Feeds}}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feed</th><th>Status</th><th>Failures</th><th>Last error</th><th></th></tr></thead>
+      <tbody>
+      {{range .}}
+        <tr>
+          <td data-label="Feed">{{with .Title}}{{.}}<br>{{end}}<code>{{.Url}}</code></td>
+          <td data-label="Status">{{if .DisabledAt.Valid}}<span class="badge off">paused</span>{{else}}<span class="badge">active</span>{{end}}</td>
+          <td data-label="Failures">{{.FailCount}}</td>
+          <td data-label="Last error">{{.LastError}}</td>
+          <td data-label="">
+            <div class="actions">
+              {{if .DisabledAt.Valid}}
+              <form method="post" action="/admin/feeds/{{.ID}}/resume" hx-post="/admin/feeds/{{.ID}}/resume" hx-target="#feeds-panel" hx-swap="outerHTML">
+                <button class="ghost" type="submit">Resume</button>
+              </form>
+              {{else}}
+              <form method="post" action="/admin/feeds/{{.ID}}/pause" hx-post="/admin/feeds/{{.ID}}/pause" hx-target="#feeds-panel" hx-swap="outerHTML">
+                <button class="ghost" type="submit">Pause</button>
+              </form>
+              {{end}}
+              <details class="confirm">
+                <summary>Remove</summary>
+                <div class="confirm-pop">
+                  <span>Remove this feed with all its items and subscriptions?</span>
+                  <form method="post" action="/admin/feeds/{{.ID}}/remove" hx-post="/admin/feeds/{{.ID}}/remove" hx-target="#feeds-panel" hx-swap="outerHTML">
+                    <button class="danger" type="submit">Remove</button>
+                  </form>
+                </div>
+              </details>
+            </div>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p class="empty">No feeds yet.</p>
+  {{end}}
+</div>{{end}}
