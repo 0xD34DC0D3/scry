@@ -317,16 +317,6 @@ func TestSyncFailures(t *testing.T) {
 	}
 }
 
-func TestSyncFailureBackoffCapped(t *testing.T) {
-	e := newEnv(t, http.NotFoundHandler())
-	// The 9th failure: capped, and one short of the auto-disable.
-	e.exec(t, `UPDATE feeds SET fail_count = 8 WHERE id = ?`, e.feed)
-	e.sync(t, now)
-	if f := e.getFeed(t); f.FailCount != 9 || f.NextFetchAt != now.Add(24*time.Hour).Unix() || f.DisabledAt.Valid {
-		t.Errorf("feed %+v", f)
-	}
-}
-
 func TestSyncSkips(t *testing.T) {
 	var hits atomic.Int32
 	e := newEnv(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

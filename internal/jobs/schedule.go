@@ -34,11 +34,6 @@ func (d Deps) registerSchedule(c inngestgo.Client) error {
 		inngestgo.FunctionOpts{ID: "schedule-feeds", Name: "Schedule feed syncs"},
 		inngestgo.CronTrigger(scheduleCron),
 		func(ctx context.Context, _ inngestgo.Input[any]) (any, error) {
-			// The claim is memoized once Inngest records it, so a retried
-			// send step reuses these ids. A claim retried after its
-			// UPDATE committed finds those feeds already moved and
-			// returns nothing for them: their events are lost, and they
-			// come due again at Until.
 			cl, err := step.Run(ctx, "claim", func(ctx context.Context) (claimed, error) {
 				return d.claimDue(ctx, time.Now())
 			})
@@ -54,9 +49,10 @@ func (d Deps) registerSchedule(c inngestgo.Client) error {
 }
 
 // claimDue moves up to claimBatch due feeds' next_fetch_at forward by
-// syncInterval and returns their ids. If a sync never runs (lost event),
-// the feed is simply due again then; a sync that runs sets its own next
-// time.
+// syncInterval and returns their ids. A claim retried after its UPDATE
+// committed finds those feeds already moved, so they are never sent twice;
+// their events are lost instead, and like any lost event the feed is due
+// again at Until. A sync that runs sets its own next time.
 func (d Deps) claimDue(ctx context.Context, now time.Time) (claimed, error) {
 	until := now.Add(syncInterval).Unix()
 	ids, err := db.New(d.DB.Writer).ClaimDueFeeds(ctx, db.ClaimDueFeedsParams{
@@ -65,7 +61,7 @@ func (d Deps) claimDue(ctx context.Context, now time.Time) (claimed, error) {
 	if err != nil || len(ids) == 0 {
 		return claimed{}, err
 	}
-	slices.Sort(ids) // RETURNING order is unspecified
+	slices.Sort(ids) // RETURNING order is unspecified; keeps the step output stable
 	return claimed{IDs: ids, Until: until}, nil
 }
 
