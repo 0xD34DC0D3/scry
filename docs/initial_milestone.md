@@ -120,6 +120,13 @@ Done: admin clicks "sync now" on a real feed and items appear in the DB;
 a second sync adds nothing and gets a 304 where the server supports it.
 Tests use `httptest` servers, including a redirect to a private address.
 
+Done 2026-11-18 (scry 01b6932): `/healthz` 200 in production; Inngest
+re-synced with one function (`sync-feed`); an admin's "sync now" on Hacker
+News stored 30 items with content; a second sync added none, kept
+`first_seen_at`, and rewrote content. Not checked in production: a 304, since
+HN sends neither ETag nor Last-Modified (covered by tests). Off-box backups
+still not configured.
+
 ## 4. Schedule
 
 - Cron function finds due feeds, moves `next_fetch_at`, sends `syncFeed` for
