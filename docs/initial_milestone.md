@@ -26,6 +26,8 @@ on its own. Nothing in step 1 knows about feeds.
 
 Done: `make run` serves `GET /healthz` 200; CI green on the first push.
 
+Status: done.
+
 ### 1b. Database
 
 - `internal/db`: SQLite with WAL, `foreign_keys=ON`, busy timeout; one writer
@@ -39,6 +41,8 @@ Done: `make run` serves `GET /healthz` 200; CI green on the first push.
 Done: `scry migrate up && scry doctor` pass on a fresh DB; CI runs the three
 DB checks.
 
+Status: done.
+
 ### 1c. HTTP and web
 
 - Body caps, `http.CrossOriginProtection`, security headers (voodoo's set,
@@ -50,6 +54,8 @@ DB checks.
 
 Done: the example page renders in a browser and one htmx action swaps a
 fragment; tests cover full vs fragment.
+
+Status: done.
 
 ### 1d. Auth
 
@@ -64,6 +70,8 @@ Done: with a local voodoo on :8080 and scry on :8081, logging in at voodoo
 shows the email on scry's page; an API key works with curl; a non-admin gets
 403 on the admin page.
 
+Status: done.
+
 ### 1e. Jobs
 
 - Inngest Go client, `/api/inngest` (signing key required in prod),
@@ -72,6 +80,8 @@ shows the email on scry's page; an API key works with curl; a non-admin gets
 
 Done: `npx inngest-cli dev` discovers the functions; sending the example event
 runs it.
+
+Status: done.
 
 ### 1f. Deploy
 
@@ -84,11 +94,7 @@ runs it.
 Done: `make deploy` to the droplet brings up `scry.0xd34dc0d3.dev/healthz`;
 login round-trips through `auth.0xd34dc0d3.dev`.
 
-Done 2026-11-17 (scry e29c9c1): `/healthz` 200 in production, signed-in
-browser shows the email, Inngest Cloud synced both example functions, and
-the example event added a note. Not checked in production: `/admin` 403 for
-a non-admin (needs a non-admin account; covered by tests). Off-box backups
-not configured yet.
+Status: done.
 
 ## 2. Schema and feed catalog
 
@@ -102,10 +108,7 @@ not configured yet.
 Done: an admin adds a feed URL in the browser and sees it listed; a
 non-admin cannot.
 
-Done 2026-11-17 (scry 52be3aa): `/healthz` 200 in production; an admin added
-a feed in the browser and saw it listed; a non-admin got 403; signed out
-gets 401 and a cross-origin POST 403. Inngest re-synced with zero functions.
-Off-box backups still not configured.
+Status: done.
 
 ## 3. Fetch one feed
 
@@ -120,12 +123,7 @@ Done: admin clicks "sync now" on a real feed and items appear in the DB;
 a second sync adds nothing and gets a 304 where the server supports it.
 Tests use `httptest` servers, including a redirect to a private address.
 
-Done 2026-11-18 (scry 01b6932): `/healthz` 200 in production; Inngest
-re-synced with one function (`sync-feed`); an admin's "sync now" on Hacker
-News stored 30 items with content; a second sync added none, kept
-`first_seen_at`, and rewrote content. Not checked in production: a 304, since
-HN sends neither ETag nor Last-Modified (covered by tests). Off-box backups
-still not configured.
+Status: done.
 
 ## 4. Schedule
 
@@ -137,6 +135,8 @@ still not configured.
 Done: with the Inngest dev server running, feeds sync on their own; a feed
 pointing at a dead URL backs off and is disabled after 10 failures.
 
+Status: done.
+
 ## 5. Public views
 
 - Latest items across feeds, the catalog, one feed's items. Excerpts only,
@@ -145,11 +145,7 @@ pointing at a dead URL backs off and is disabled after 10 failures.
 Done: signed out, the three pages render with real data; caching headers
 are set.
 
-Done 2026-11-18 (scry c2eb29d; checked in production on 6073705): signed
-out, `/`, `/feeds` and `/feeds/1` return 200 with HN items and
-`Cache-Control: public, max-age=60`, `Vary: Cookie, Authorization,
-HX-Request`; with a cookie, `private, no-store`. Off-box backups still not
-configured.
+Status: done.
 
 ## 6. Reading
 
@@ -161,10 +157,7 @@ configured.
 Done: a user subscribes to two feeds, reads items, marks all read, and the
 unread count is right after a new sync.
 
-Built 2026-11-18 (scry 32effe3), deployed; production done check pending.
-Built in parallel with step 7 (one git worktree each) and rebased onto the
-owner's UX commits 726fb81..6073705; see design.md. Done check passed
-against a local voodoo, scry and Inngest dev server with five real feeds.
+Status: built; production check pending.
 
 ## 7. Pruning
 
@@ -173,9 +166,7 @@ against a local voodoo, scry and Inngest dev server with five real feeds.
 
 Done: test with old rows shows them pruned in batches and newer rows kept.
 
-Done 2026-11-18 (scry 8091449): `TestPrune` shows batches of 500, 500, 7
-and newer rows kept. Deployed with 6073705; the `prune` function runs only
-after the Inngest app is re-synced (manual, dashboard), not yet done.
+Status: done.
 
 ## 8. Ship
 
@@ -184,3 +175,5 @@ after the Inngest app is re-synced (manual, dashboard), not yet done.
   `gonew` produces a running app.
 
 Done: scry is live and the template repo makes a new app that passes CI.
+
+Status: not started.

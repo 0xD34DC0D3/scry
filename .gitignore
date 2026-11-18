@@ -17,6 +17,22 @@ coverage.*
 .env.*
 !.env.example
 
+# Secrets and restore leftovers (docs/deploy.md): a server env file, the CI
+# deploy key, age keys and backups, a moved-aside database, a staged release.
+*.env
+!*.env.example
+ci_key*
+id_ed25519*
+id_rsa*
+id_ecdsa*
+key.txt
+*.age
+*.key
+*.pem
+*.db.gz
+*.db.broken
+stage/
+
 # Editor / OS
 .DS_Store
 *.swp

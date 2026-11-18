@@ -7,7 +7,8 @@ It is also the source of the org's Go app template.
 Status: early. Admins manage the feed catalog at `/admin/feeds`; feeds are
 fetched on a schedule. Anyone can read the latest items at `/`, the catalog
 at `/feeds` and one feed at `/feeds/{id}` (excerpts, linking out).
-Signed-in reading and subscriptions are not built yet.
+Signed-in users subscribe to feeds and read full items, with unread
+tracking, at `/reading`.
 The plan is in [docs/initial_milestone.md](docs/initial_milestone.md) and the
 spec in [docs/design.md](docs/design.md).
 
@@ -23,4 +24,12 @@ curl localhost:8081/healthz
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE), except the third-party files below.
+
+### Third-party files
+
+- `internal/web/static/htmx.min.js`: [htmx](https://htmx.org), 0BSD; the
+  version is in `internal/web/web.go`.
+- `internal/web/static/fonts/`: Atkinson Hyperlegible Next and JetBrains
+  Mono, SIL Open Font License 1.1
+  ([OFL.txt](internal/web/static/fonts/OFL.txt)).
