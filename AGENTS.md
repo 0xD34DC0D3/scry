@@ -39,7 +39,9 @@ RSS reader in Go, and the source of the org's Go app template. Spec:
 
 ## Jobs
 
-- `internal/jobs`: Inngest Go SDK (`inngestgo`), app ID `scry`. `jobs.New(jobs.Deps{...})` creates the client and registers every function (in `register`; none until step 3); functions get the DB from `Deps`, no globals. Put writes inside `step.Run`.
+- `internal/jobs`: Inngest Go SDK (`inngestgo`), app ID `scry`. `jobs.New(jobs.Deps{DB: d})` creates the client and registers every function (in `register`); functions get the DB from `Deps`, no globals. Put writes inside `step.Run`.
+- `syncFeed` (`syncfeed.go`, event `scry/feed.sync`, data `{feed_id}`; build it with `jobs.SyncFeed(id)`): one step that fetches (`fetch.go`), parses and sanitizes (`parse.go`), then writes in one transaction, returning only a status and item count. A 304 takes the same write with no items. A failed fetch or parse is recorded on the feed (`fail_count`, `last_error`, and backoff computed in the `FeedFailed` UPDATE) and the run ends normally; only DB errors fail the step, so Inngest does not retry a dead feed. Both feed writes skip a paused feed, so a pause during the fetch wins.
+- The fetcher refuses non-public addresses in `net.Dialer.Control`, on the dialled IP, so redirects and DNS rebinding are covered; no env proxy. Tests reach `httptest` (loopback) through the unexported `fetcher.allow`, set to the one test server's ip:port, so any other address still meets the real check. Never add a flag or env var for it.
 - The SDK handler is mounted at `/api/inngest` (`jobs.Path`). It skips CSRF and voodoo auth (Inngest signs its requests) and has a 36 MiB body cap instead of 64 KB.
 - Config is the SDK's own env vars (`INNGEST_SIGNING_KEY`, `INNGEST_EVENT_KEY`, `INNGEST_DEV`), not `SCRY_`. Prod requires both keys and refuses `INNGEST_DEV`.
 - Local dev: `INNGEST_DEV=1` in `.env`, then `npx inngest-cli@latest dev -u http://localhost:8081/api/inngest`; the UI is at http://localhost:8288.

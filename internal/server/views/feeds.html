@@ -7,6 +7,7 @@
 
 {{define "feeds-panel"}}<div id="feeds-panel">
   {{with .Data.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+  {{with .Data.Notice}}<p class="flash" role="status">{{.}}</p>{{end}}
   <form method="post" action="/admin/feeds" hx-post="/admin/feeds" hx-target="#feeds-panel" hx-swap="outerHTML">
     <div class="form-row">
       <label>
@@ -34,6 +35,9 @@
                 <button class="ghost" type="submit">Resume</button>
               </form>
               {{else}}
+              <form method="post" action="/admin/feeds/{{.ID}}/sync" hx-post="/admin/feeds/{{.ID}}/sync" hx-target="#feeds-panel" hx-swap="outerHTML">
+                <button class="ghost" type="submit">Sync now</button>
+              </form>
               <form method="post" action="/admin/feeds/{{.ID}}/pause" hx-post="/admin/feeds/{{.ID}}/pause" hx-target="#feeds-panel" hx-swap="outerHTML">
                 <button class="ghost" type="submit">Pause</button>
               </form>

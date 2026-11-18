@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/inngest/inngestgo"
+
 	"github.com/0xD34DC0D3/scry/internal/db"
+	"github.com/0xD34DC0D3/scry/internal/jobs"
 )
 
 var hx = map[string]string{"HX-Request": "true"}
@@ -73,6 +77,7 @@ func TestFeedRoutesAuth(t *testing.T) {
 		{"pause", func(id int64, c string) *http.Request { return postForm(actionPath(id, "pause"), nil, c, nil) }, http.StatusSeeOther},
 		{"resume", func(id int64, c string) *http.Request { return postForm(actionPath(id, "resume"), nil, c, nil) }, http.StatusSeeOther},
 		{"remove", func(id int64, c string) *http.Request { return postForm(actionPath(id, "remove"), nil, c, nil) }, http.StatusSeeOther},
+		{"sync", func(id int64, c string) *http.Request { return postForm(actionPath(id, "sync"), nil, c, nil) }, http.StatusSeeOther},
 	}
 	callers := []struct {
 		cookie string
@@ -86,7 +91,8 @@ func TestFeedRoutesAuth(t *testing.T) {
 	for _, rt := range routes {
 		for _, c := range callers {
 			t.Run(rt.name+"/"+c.cookie, func(t *testing.T) {
-				h, d := newTestServer(t, nil)
+				fj := &fakeJobs{}
+				h, d := newTestServer(t, fj)
 				f := seedFeed(t, d, "https://seed.example/feed")
 				want := c.want
 				if c.admin {
@@ -97,8 +103,8 @@ func TestFeedRoutesAuth(t *testing.T) {
 				}
 				if !c.admin {
 					got, ok := getFeed(t, d, f.ID)
-					if !ok || got.DisabledAt.Valid || countFeeds(t, d) != 1 {
-						t.Errorf("non-admin changed the catalog: %+v exists=%v", got, ok)
+					if !ok || got.DisabledAt.Valid || countFeeds(t, d) != 1 || len(fj.sent) != 0 {
+						t.Errorf("non-admin changed the catalog: %+v exists=%v sent=%d", got, ok, len(fj.sent))
 					}
 				}
 			})
@@ -345,4 +351,73 @@ func TestRemoveFeedCascades(t *testing.T) {
 			t.Errorf("%s has %d rows, want 1 (the kept feed's)", table, n)
 		}
 	}
+}
+
+func TestSyncNow(t *testing.T) {
+	t.Run("plain and htmx", func(t *testing.T) {
+		fj := &fakeJobs{}
+		h, d := newTestServer(t, fj)
+		f := seedFeed(t, d, "https://seed.example/feed")
+		rec := do(h, postForm(actionPath(f.ID, "sync"), nil, "admin", nil))
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != feedsPath {
+			t.Errorf("plain: %d Location=%q", rec.Code, rec.Header().Get("Location"))
+		}
+		rec = do(h, postForm(actionPath(f.ID, "sync"), nil, "admin", hx))
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK || !isFragment(body) || !strings.Contains(body, "Sync queued.") {
+			t.Errorf("htmx: %d %s", rec.Code, body)
+		}
+		evs := fj.sent
+		if len(evs) != 2 {
+			t.Fatalf("%d events, want 2", len(evs))
+		}
+		ev, ok := evs[0].(inngestgo.Event)
+		if !ok || ev.Name != jobs.SyncFeedEvent || ev.Data["feed_id"] != f.ID {
+			t.Errorf("event %#v", evs[0])
+		}
+	})
+
+	t.Run("button only for active feeds", func(t *testing.T) {
+		h, d := newTestServer(t, &fakeJobs{})
+		active := seedFeed(t, d, "https://active.example/feed")
+		paused := seedFeed(t, d, "https://paused.example/feed")
+		if _, err := d.Writer.Exec(`UPDATE feeds SET disabled_at = 1 WHERE id = ?`, paused.ID); err != nil {
+			t.Fatal(err)
+		}
+		page := do(h, withCookie(httptest.NewRequest(http.MethodGet, feedsPath, nil), "admin")).Body.String()
+		if !strings.Contains(page, actionPath(active.ID, "sync")) || strings.Contains(page, actionPath(paused.ID, "sync")) {
+			t.Errorf("sync buttons wrong: %s", page)
+		}
+	})
+
+	t.Run("unknown feed", func(t *testing.T) {
+		fj := &fakeJobs{}
+		h, _ := newTestServer(t, fj)
+		if rec := do(h, postForm(actionPath(99, "sync"), nil, "admin", nil)); rec.Code != http.StatusNotFound {
+			t.Errorf("plain: %d", rec.Code)
+		}
+		rec := do(h, postForm(actionPath(99, "sync"), nil, "admin", hx))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "no longer exists") {
+			t.Errorf("htmx: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := do(h, postForm(feedsPath+"/abc/sync", nil, "admin", nil)); rec.Code != http.StatusNotFound {
+			t.Errorf("bad id: %d", rec.Code)
+		}
+		if n := len(fj.sent); n != 0 {
+			t.Errorf("sent %d events", n)
+		}
+	})
+
+	t.Run("send fails", func(t *testing.T) {
+		h, d := newTestServer(t, &fakeJobs{sendErr: errors.New("down")})
+		f := seedFeed(t, d, "https://seed.example/feed")
+		rec := do(h, postForm(actionPath(f.ID, "sync"), nil, "admin", nil))
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "Could not queue") {
+			t.Errorf("plain: %d", rec.Code)
+		}
+		rec = do(h, postForm(actionPath(f.ID, "sync"), nil, "admin", hx))
+		if rec.Code != http.StatusOK || !isFragment(rec.Body.String()) || !strings.Contains(rec.Body.String(), "Could not queue") {
+			t.Errorf("htmx: %d %s", rec.Code, rec.Body.String())
+		}
+	})
 }

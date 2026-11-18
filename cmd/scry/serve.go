@@ -48,7 +48,7 @@ func runServe(_ []string) error {
 	// falls back to the Host header for next=.
 	auth.AppURL = cfg.BaseURL
 
-	jc, err := jobs.New(jobs.Deps{R: db.New(d.Reader), W: db.New(d.Writer)})
+	jc, err := jobs.New(jobs.Deps{DB: d})
 	if err != nil {
 		return err
 	}

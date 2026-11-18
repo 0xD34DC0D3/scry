@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,9 +19,20 @@ import (
 )
 
 // fakeJobs stands in for the Inngest client: Serve reports what reached the
-// handler. Unused methods panic via the nil embed.
+// handler, Send records events (or fails with sendErr). Unused methods panic
+// via the nil embed.
 type fakeJobs struct {
 	inngestgo.Client
+	sent    []any
+	sendErr error
+}
+
+func (f *fakeJobs) Send(_ context.Context, evt any) (string, error) {
+	if f.sendErr != nil {
+		return "", f.sendErr
+	}
+	f.sent = append(f.sent, evt)
+	return "id", nil
 }
 
 // Serve reads the whole body, as the SDK does, and says how much arrived and
@@ -67,12 +79,12 @@ func TestJobsRouteThroughMiddleware(t *testing.T) {
 }
 
 // The real SDK handler answers through the stack: in dev mode GET is its
-// unauthenticated inspection, which lists the registered functions (none
-// until step 3).
+// unauthenticated inspection, which lists the registered functions
+// (syncFeed).
 func TestJobsRouteRealSDK(t *testing.T) {
 	h := newTestHandler(t)
 	rec := do(h, httptest.NewRequest(http.MethodGet, jobs.Path, nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"function_count":0`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"function_count":1`) {
 		t.Fatalf("GET %s = %d %s", jobs.Path, rec.Code, rec.Body.String())
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/0xD34DC0D3/scry/internal/db"
+	"github.com/0xD34DC0D3/scry/internal/jobs"
 	"github.com/0xD34DC0D3/scry/internal/web"
 )
 
@@ -29,12 +30,14 @@ func (s *server) feedRoutes(mux *http.ServeMux) {
 	mux.Handle("POST "+feedsPath+"/{id}/pause", admin(s.feedAction((*db.Queries).PauseFeed)))
 	mux.Handle("POST "+feedsPath+"/{id}/resume", admin(s.feedAction((*db.Queries).ResumeFeed)))
 	mux.Handle("POST "+feedsPath+"/{id}/remove", admin(s.feedAction((*db.Queries).DeleteFeed)))
+	mux.Handle("POST "+feedsPath+"/{id}/sync", admin(s.syncFeed))
 }
 
 type feedsData struct {
-	Feeds []db.Feed
-	URL   string // the add form's value, kept when it was rejected
-	Error string
+	Feeds  []db.Feed
+	URL    string // the add form's value, kept when it was rejected
+	Error  string
+	Notice string
 }
 
 func (s *server) renderFeeds(w http.ResponseWriter, r *http.Request, d feedsData, status int) {
@@ -115,6 +118,37 @@ func (s *server) feedAction(q func(*db.Queries, context.Context, int64) (int64, 
 		}
 		s.done(w, r)
 	}
+}
+
+// syncFeed queues a sync through Inngest; the fetch itself runs in the job,
+// so the panel shows its result only after a reload. A paused feed is sent
+// too and the job skips it (it checks at its read and again in its write):
+// the button is hidden for paused feeds, and a pause can land between this
+// check and the job anyway.
+func (s *server) syncFeed(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if _, err := s.r.GetFeed(r.Context(), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			s.renderFeeds(w, r, feedsData{Error: "That feed no longer exists."}, http.StatusNotFound)
+			return
+		}
+		internalError(w, "get feed", err)
+		return
+	}
+	if _, err := s.jobs.Send(r.Context(), jobs.SyncFeed(id)); err != nil {
+		slog.Error("send sync event", "feed_id", id, "err", err)
+		s.renderFeeds(w, r, feedsData{Error: "Could not queue the sync; try again."}, http.StatusServiceUnavailable)
+		return
+	}
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, feedsPath, http.StatusSeeOther)
+		return
+	}
+	s.renderFeeds(w, r, feedsData{Notice: "Sync queued."}, http.StatusOK)
 }
 
 // normalizeFeedURL returns the form stored in feeds.url, or a message for

@@ -6,15 +6,19 @@ require (
 	github.com/0xD34DC0D3/voodoo v0.0.0
 	github.com/inngest/inngestgo v0.16.5
 	github.com/joho/godotenv v1.5.1
+	github.com/microcosm-cc/bluemonday v1.0.27
+	github.com/mmcdole/gofeed v1.5.0
 	github.com/pressly/goose/v3 v3.30.1
 	modernc.org/sqlite v1.62.0
 )
 
 require (
+	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gorilla/css v1.0.1 // indirect
 	github.com/gosimple/slug v1.12.0 // indirect
 	github.com/gosimple/unidecode v1.0.1 // indirect
 	github.com/gowebpki/jcs v1.0.0 // indirect
@@ -24,6 +28,7 @@ require (
 	github.com/lmittmann/tint v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mfridman/interpolate v0.2.0 // indirect
+	github.com/mmcdole/goxpp/v2 v2.0.0 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect

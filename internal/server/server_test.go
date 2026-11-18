@@ -77,7 +77,7 @@ func newTestServer(t *testing.T, jc inngestgo.Client) (http.Handler, *db.DB) {
 	}
 	if jc == nil {
 		t.Setenv("INNGEST_DEV", "1")
-		if jc, err = jobs.New(jobs.Deps{R: db.New(d.Reader), W: db.New(d.Writer)}); err != nil {
+		if jc, err = jobs.New(jobs.Deps{DB: d}); err != nil {
 			t.Fatal(err)
 		}
 	}

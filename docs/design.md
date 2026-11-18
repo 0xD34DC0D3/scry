@@ -64,6 +64,7 @@ Out: Antfly, MCP, GraphQL, anything app-specific.
 - Success, including 304, resets `fail_count`. A failure counts up and backs `next_fetch_at` off, up to 24 h; after 10 the feed is disabled and shown to admins. Inngest retries cover only blips within one run.
 - HTML is sanitized on the way in (bluemonday `UGCPolicy`); the excerpt is plain text.
 - Pruning runs daily in batches.
+- Step 3 decisions: event `scry/feed.sync`; fetch, parse and write run in one step returning a status and item count; a 304 takes the same write with no items. Fetch or parse failures are recorded and end the run normally (no Inngest retry); only database errors fail the step. Both feed writes skip a paused feed, so a pause during the fetch wins. Backoff is computed in the failure UPDATE from the old `fail_count`: 30 min doubling, capped at 24 h; a success sets `next_fetch_at` to now + 1 h until step 4 owns scheduling. The fetcher checks the dialled IP (covers redirects and DNS rebinding), ignores proxy env vars, allows only http(s) and 5 redirects. Excerpts are 300 runes, taken from the same HTML as the content (content preferred over description). `last_error` keeps 500 bytes.
 
 ## Deferred
 
@@ -85,4 +86,5 @@ Out: Antfly, MCP, GraphQL, anything app-specific.
 - Feeds whose guids change on every fetch produce duplicates.
 - Inngest sync is manual from the dashboard: inngestgo v0.16+ refuses unsigned `PUT /api/inngest` unless `INNGEST_ENABLE_UNAUTHED_SYNC` is set. Enabling it would also need `ServeOrigin` pinned to `SCRY_BASE_URL`, or the synced URL comes from the Host header.
 - Production has no off-box backups yet (`/etc/scry/backup.env` absent); deploys take a local copy only.
+- A failure can be counted twice: overlapping syncs before step 4's per-feed concurrency, or a step retried after its write committed.
 - Feed URL dedup folds only scheme and host case; `:443`, a trailing dot, `#fragment`, or IDN vs punycode variants store the same feed twice.

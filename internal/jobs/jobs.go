@@ -27,8 +27,9 @@ const MaxBody = 36 << 20
 // Deps is everything the functions use. Passed in, never global, so tests
 // can hand them a temp DB.
 type Deps struct {
-	R *db.Queries // read pool
-	W *db.Queries // single writer
+	DB *db.DB // writes go through DB.Writer, the single writer
+
+	fetcher *fetcher // New sets the real one; tests in this package set their own
 }
 
 // New returns the client with every function registered.
@@ -43,14 +44,16 @@ func New(d Deps) (inngestgo.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if d.fetcher == nil {
+		d.fetcher = newFetcher()
+	}
 	if err := d.register(c); err != nil {
 		return nil, err
 	}
 	return c, nil
 }
 
-// register adds every function to c. There are none yet; step 3 adds
-// syncFeed here.
+// register adds every function to c.
 func (d Deps) register(c inngestgo.Client) error {
-	return nil
+	return d.registerSyncFeed(c)
 }

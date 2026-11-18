@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 const createFeed = `-- name: CreateFeed :one
@@ -41,6 +42,93 @@ func (q *Queries) DeleteFeed(ctx context.Context, id int64) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const feedFailed = `-- name: FeedFailed :execrows
+UPDATE feeds
+SET fail_count = fail_count + 1,
+    last_error = ?1,
+    next_fetch_at = CAST(?2 AS INTEGER) + min(1800 << min(fail_count, 6), 86400)
+WHERE id = ?3 AND disabled_at IS NULL
+`
+
+type FeedFailedParams struct {
+	LastError string
+	Now       int64
+	ID        int64
+}
+
+// Backoff from the old fail_count, in one statement so overlapping syncs
+// cannot both read the same count: 30 min doubling, capped at 24 h.
+func (q *Queries) FeedFailed(ctx context.Context, arg FeedFailedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, feedFailed, arg.LastError, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const feedSynced = `-- name: FeedSynced :execrows
+
+UPDATE feeds
+SET title = coalesce(nullif(CAST(?1 AS TEXT), ''), title),
+    site_url = coalesce(nullif(CAST(?2 AS TEXT), ''), site_url),
+    etag = ?3,
+    last_modified = ?4,
+    next_fetch_at = ?5,
+    fail_count = 0,
+    last_error = ''
+WHERE id = ?6 AND disabled_at IS NULL
+`
+
+type FeedSyncedParams struct {
+	Title        string
+	SiteUrl      string
+	Etag         string
+	LastModified string
+	NextFetchAt  int64
+	ID           int64
+}
+
+// Sync (internal/jobs). Both feed updates skip a paused feed, so a pause
+// that lands during the fetch wins; zero rows means paused or removed. The
+// feed update runs first in the write, before any item.
+// A fetch that gave no title or site link (or a 304) keeps the stored ones.
+func (q *Queries) FeedSynced(ctx context.Context, arg FeedSyncedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, feedSynced,
+		arg.Title,
+		arg.SiteUrl,
+		arg.Etag,
+		arg.LastModified,
+		arg.NextFetchAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const getFeed = `-- name: GetFeed :one
+SELECT id, url, title, site_url, etag, last_modified, next_fetch_at, fail_count, last_error, disabled_at FROM feeds WHERE id = ?
+`
+
+func (q *Queries) GetFeed(ctx context.Context, id int64) (Feed, error) {
+	row := q.db.QueryRowContext(ctx, getFeed, id)
+	var i Feed
+	err := row.Scan(
+		&i.ID,
+		&i.Url,
+		&i.Title,
+		&i.SiteUrl,
+		&i.Etag,
+		&i.LastModified,
+		&i.NextFetchAt,
+		&i.FailCount,
+		&i.LastError,
+		&i.DisabledAt,
+	)
+	return i, err
 }
 
 const listFeeds = `-- name: ListFeeds :many
@@ -109,4 +197,66 @@ func (q *Queries) ResumeFeed(ctx context.Context, id int64) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const upsertItem = `-- name: UpsertItem :one
+INSERT INTO items (feed_id, dedup_key, url, title, author, published_at, first_seen_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (feed_id, dedup_key) DO UPDATE
+SET url = excluded.url,
+    title = excluded.title,
+    author = excluded.author,
+    published_at = excluded.published_at
+RETURNING id
+`
+
+type UpsertItemParams struct {
+	FeedID      int64
+	DedupKey    string
+	Url         string
+	Title       string
+	Author      string
+	PublishedAt sql.NullInt64
+	FirstSeenAt int64
+}
+
+// An existing item keeps its id and first_seen_at, so it never shows as new
+// again; the rest follows the feed's latest copy.
+func (q *Queries) UpsertItem(ctx context.Context, arg UpsertItemParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, upsertItem,
+		arg.FeedID,
+		arg.DedupKey,
+		arg.Url,
+		arg.Title,
+		arg.Author,
+		arg.PublishedAt,
+		arg.FirstSeenAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const upsertItemContent = `-- name: UpsertItemContent :exec
+INSERT INTO item_contents (item_id, html, excerpt, fetched_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT (item_id) DO UPDATE
+SET html = excluded.html, excerpt = excluded.excerpt, fetched_at = excluded.fetched_at
+`
+
+type UpsertItemContentParams struct {
+	ItemID    int64
+	Html      string
+	Excerpt   string
+	FetchedAt int64
+}
+
+func (q *Queries) UpsertItemContent(ctx context.Context, arg UpsertItemContentParams) error {
+	_, err := q.db.ExecContext(ctx, upsertItemContent,
+		arg.ItemID,
+		arg.Html,
+		arg.Excerpt,
+		arg.FetchedAt,
+	)
+	return err
 }
