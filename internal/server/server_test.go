@@ -41,7 +41,10 @@ func fakeVoodoo(t *testing.T) string {
 	return srv.URL
 }
 
-const testBaseURL = "https://scry.example.com"
+const (
+	testBaseURL = "https://scry.example.com"
+	testSiteURL = "https://site.example.com"
+)
 
 // newTestHandler uses the real jobs client against the (absent) dev server:
 // INNGEST_DEV keeps the SDK from demanding a signing key.
@@ -81,7 +84,7 @@ func newTestServer(t *testing.T, jc inngestgo.Client) (http.Handler, *db.DB) {
 			t.Fatal(err)
 		}
 	}
-	return New(d, auth, jc), d
+	return New(d, auth, jc, testSiteURL), d
 }
 
 func withCookie(req *http.Request, v string) *http.Request {
@@ -183,10 +186,12 @@ func TestOversizedBodyRejected(t *testing.T) {
 
 func TestPanicRecovered(t *testing.T) {
 	h := chain(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }),
-		requestLogger, securityHeaders, recoverer)
+		requestLogger, securityHeaders, recoverer(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "page", http.StatusInternalServerError)
+		}))
 	rec := do(h, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", rec.Code)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "page") {
+		t.Errorf("status = %d, want 500 from the page func", rec.Code)
 	}
 	if rec.Header().Get("Content-Security-Policy") == "" {
 		t.Error("500 lacks security headers")
@@ -251,7 +256,9 @@ func TestLoggedRouteSurvivesAuth(t *testing.T) {
 	if !strings.Contains(out, `route="GET /admin/feeds"`) {
 		t.Errorf("route missing from log: %s", out)
 	}
-	if !strings.Contains(out, "route=unmatched") || strings.Contains(out, "/nope") {
+	// The catch-all 404 pattern "/" names unknown paths; the raw path is
+	// never logged.
+	if !strings.Contains(out, "route=/ ") || strings.Contains(out, "/nope") {
 		t.Errorf("unmatched route logged wrong: %s", out)
 	}
 }
@@ -264,7 +271,7 @@ func TestPanicLoggedWithRoute(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /boom", func(http.ResponseWriter, *http.Request) { panic("boom") })
-	do(chain(recordRoute(mux), requestLogger, recoverer), httptest.NewRequest(http.MethodGet, "/boom", nil))
+	do(chain(recordRoute(mux), requestLogger, recoverer(func(http.ResponseWriter, *http.Request) {})), httptest.NewRequest(http.MethodGet, "/boom", nil))
 	if out := buf.String(); !strings.Contains(out, `route="GET /boom"`) {
 		t.Errorf("panic logged without its route: %s", out)
 	}

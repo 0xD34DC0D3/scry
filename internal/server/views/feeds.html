@@ -4,14 +4,14 @@
      failures (fail_count and last_error tell them apart); Resume clears
      either. */}}
 {{define "feeds"}}{{template "top" .}}
-<h1>Feeds</h1>
+<h1>Manage feeds</h1>
 {{template "feeds-panel" .}}
 {{template "bottom" .}}{{end}}
 
 {{define "feeds-panel"}}<div id="feeds-panel">
   {{with .Data.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
   {{with .Data.Notice}}<p class="flash" role="status">{{.}}</p>{{end}}
-  <form method="post" action="/admin/feeds" hx-post="/admin/feeds" hx-target="#feeds-panel" hx-swap="outerHTML">
+  <form method="post" action="/admin/feeds" hx-post="/admin/feeds" hx-target="#feeds-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
     <div class="form-row">
       <label>
         <span>Feed URL</span>
@@ -30,18 +30,18 @@
           <td data-label="Feed">{{with .Title}}{{.}}<br>{{end}}<code>{{.Url}}</code></td>
           <td data-label="Status">{{if .DisabledAt.Valid}}<span class="badge off">paused</span>{{else if .FailCount}}<span class="badge bad">failing</span>{{else}}<span class="badge">active</span>{{end}}</td>
           <td data-label="Failures">{{.FailCount}}</td>
-          <td data-label="Last error">{{.LastError}}</td>
+          <td data-label="Last error">{{with .LastError}}<details class="last-error"><summary>show</summary><code>{{.}}</code></details>{{end}}</td>
           <td data-label="">
             <div class="actions">
               {{if .DisabledAt.Valid}}
-              <form method="post" action="/admin/feeds/{{.ID}}/resume" hx-post="/admin/feeds/{{.ID}}/resume" hx-target="#feeds-panel" hx-swap="outerHTML">
+              <form method="post" action="/admin/feeds/{{.ID}}/resume" hx-post="/admin/feeds/{{.ID}}/resume" hx-target="#feeds-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
                 <button class="ghost" type="submit">Resume</button>
               </form>
               {{else}}
-              <form method="post" action="/admin/feeds/{{.ID}}/sync" hx-post="/admin/feeds/{{.ID}}/sync" hx-target="#feeds-panel" hx-swap="outerHTML">
+              <form method="post" action="/admin/feeds/{{.ID}}/sync" hx-post="/admin/feeds/{{.ID}}/sync" hx-target="#feeds-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
                 <button class="ghost" type="submit">Sync now</button>
               </form>
-              <form method="post" action="/admin/feeds/{{.ID}}/pause" hx-post="/admin/feeds/{{.ID}}/pause" hx-target="#feeds-panel" hx-swap="outerHTML">
+              <form method="post" action="/admin/feeds/{{.ID}}/pause" hx-post="/admin/feeds/{{.ID}}/pause" hx-target="#feeds-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
                 <button class="ghost" type="submit">Pause</button>
               </form>
               {{end}}
@@ -49,7 +49,7 @@
                 <summary>Remove</summary>
                 <div class="confirm-pop">
                   <span>Remove this feed with all its items and subscriptions?</span>
-                  <form method="post" action="/admin/feeds/{{.ID}}/remove" hx-post="/admin/feeds/{{.ID}}/remove" hx-target="#feeds-panel" hx-swap="outerHTML">
+                  <form method="post" action="/admin/feeds/{{.ID}}/remove" hx-post="/admin/feeds/{{.ID}}/remove" hx-target="#feeds-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
                     <button class="danger" type="submit">Remove</button>
                   </form>
                 </div>
@@ -62,6 +62,6 @@
     </table>
   </div>
   {{else}}
-  <p class="empty">No feeds yet.</p>
+  <p class="empty">No feeds yet. Add one by URL above.</p>
   {{end}}
 </div>{{end}}

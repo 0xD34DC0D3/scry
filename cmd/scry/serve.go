@@ -58,7 +58,7 @@ func runServe(_ []string) error {
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(cfg.BindHost, strconv.Itoa(cfg.Port)),
-		Handler:           server.New(d, auth, jc),
+		Handler:           server.New(d, auth, jc, cfg.SiteURL),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,

@@ -1,7 +1,11 @@
 {{/* Public views: latest items, the catalog, one feed's items. Excerpts are
      plain text; titles and URLs go through html/template's escaping, so a
      javascript: item URL renders as #ZgotmplZ. "items-page" is the fragment
-     the "Older" link fetches with htmx and swaps in place of itself. */}}
+     the "Older" link fetches with htmx and swaps in place of itself; in that
+     fragment (.Partial) the first item carries autofocus, which htmx focuses
+     after the swap, so keyboard focus lands on the first new item instead of
+     falling back to <body>. Admin-only bits are cache-safe: an admin request
+     carries a credential, so setCache makes it private, no-store. */}}
 {{define "latest"}}{{template "top" .}}
 <h1>Latest</h1>
 {{template "item-list" .}}
@@ -22,22 +26,29 @@
 
 {{define "item-list"}}{{if .Data.Items}}
 <ol class="items">{{template "items-page" .}}</ol>
+{{else if .Data.Feed}}
+<p class="empty">Nothing from this feed in the last 30 days. <a href="/">See the latest from every feed</a>.</p>
+{{else if and .User .User.IsAdmin}}
+<p class="empty">Nothing in the last 30 days. <a href="/admin/feeds">Manage feeds</a>.</p>
 {{else}}
-<p class="empty">Nothing in the last 30 days.</p>
+<p class="empty">Nothing in the last 30 days. <a href="/feeds">Browse the feeds</a>.</p>
 {{end}}{{end}}
 
-{{define "items-page"}}{{$feedPage := .Data.Feed}}{{range .Data.Items}}
-<li class="item">
-  <h3>{{if .URL}}<a href="{{.URL}}">{{or .Title .URL}}</a>{{else}}{{or .Title "(untitled)"}}{{end}}</h3>
+{{define "items-page"}}{{$feedPage := .Data.Feed}}{{$partial := .Partial}}{{range $i, $_ := .Data.Items}}
+<li class="item"{{if and $partial (eq $i 0)}} tabindex="-1" autofocus{{end}}>
+  <h2>{{if .URL}}<a href="{{.URL}}">{{or .Title .URL}}</a>{{else}}{{or .Title "(untitled)"}}{{end}}</h2>
   <p class="item-meta"><time datetime="{{.Seen.Format "2006-01-02T15:04:05Z"}}">{{.Seen.Format "2006-01-02 15:04"}} UTC</time>{{if not $feedPage}} · <a href="/feeds/{{.FeedID}}">{{.FeedName}}</a>{{end}}{{with .Domain}} · {{.}}{{end}}{{with .Author}} · by {{.}}{{end}}{{with .CommentsURL}} · <a href="{{.}}">discussion</a>{{end}}</p>
   {{with .Excerpt}}<p class="excerpt">{{.}}</p>{{end}}
 </li>
 {{end}}{{with .Data.Older}}
 <li class="more"><a class="btn" href="{{.}}" hx-get="{{.}}" hx-target="closest li" hx-swap="outerHTML">Older</a></li>
-{{end}}{{end}}
+{{else}}{{if .Data.Items}}
+<li class="end">— end of 30 days —</li>
+{{end}}{{end}}{{end}}
 
 {{define "catalog"}}{{template "top" .}}
 <h1>Feeds</h1>
+{{if and .User .User.IsAdmin}}<p class="backlink"><a href="/admin/feeds">Manage feeds →</a></p>{{end}}
 {{with .Data}}
 <div class="table-wrap">
   <table>
@@ -54,6 +65,6 @@
   </table>
 </div>
 {{else}}
-<p class="empty">No feeds yet.</p>
+<p class="empty">No feeds yet.{{if and $.User $.User.IsAdmin}} <a href="/admin/feeds">Add one</a>.{{end}}</p>
 {{end}}
 {{template "bottom" .}}{{end}}

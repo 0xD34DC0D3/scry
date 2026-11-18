@@ -83,23 +83,26 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// recoverer turns a handler panic into a 500 instead of a dropped connection.
-// http.ErrAbortHandler is net/http's deliberate abort and is re-panicked.
-func recoverer(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			v := recover()
-			if v == nil {
-				return
-			}
-			if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
-				panic(v)
-			}
-			slog.Error("panic", "panic", v)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-		}()
-		next.ServeHTTP(w, r)
-	})
+// recoverer turns a handler panic into a 500 (written by page) instead of a
+// dropped connection. http.ErrAbortHandler is net/http's deliberate abort
+// and is re-panicked.
+func recoverer(page http.HandlerFunc) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				v := recover()
+				if v == nil {
+					return
+				}
+				if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+					panic(v)
+				}
+				slog.Error("panic", "panic", v)
+				page(w, r)
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // statusWriter records the status for the request log.

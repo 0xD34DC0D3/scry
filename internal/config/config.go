@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -24,6 +25,11 @@ type Config struct {
 	// header is never used for that.
 	BaseURL  string
 	LogLevel slog.Level
+
+	// SiteURL is the org website the header tile and footer link to, with no
+	// trailing slash. The org design guide says hosts come from env, never
+	// code; the default is the website's local dev server.
+	SiteURL string
 
 	// VoodooURL is the voodoo server that owns sign-in and answers /me.
 	VoodooURL string
@@ -74,6 +80,7 @@ func Load() (*Config, error) {
 		Port:      port,
 		BindHost:  bindHost,
 		BaseURL:   os.Getenv("SCRY_BASE_URL"),
+		SiteURL:   strings.TrimRight(envOr("SCRY_SITE_URL", "http://localhost:4321"), "/"),
 		LogLevel:  level,
 		Prod:      prod,
 		VoodooURL: os.Getenv("SCRY_VOODOO_URL"),
@@ -90,7 +97,9 @@ func Load() (*Config, error) {
 // In prod BaseURL is the origin of every link scry emits and the login
 // redirect target, and VoodooURL receives users' session cookies and API
 // keys; without https those would travel in the clear. Without BaseURL in
-// prod, next= would come from the client-controlled Host header.
+// prod, next= would come from the client-controlled Host header. SiteURL
+// is linked from every page, so prod wants https there too (and so refuses
+// the localhost default).
 //
 // In prod the signing key is what stops anyone else from calling
 // /api/inngest, and dev mode turns that check off, so dev is refused and
@@ -104,6 +113,12 @@ func (c *Config) CheckServe() error {
 	}
 	if c.Prod && !validURL(c.BaseURL, true) {
 		return errors.New("SCRY_BASE_URL must be an https URL when SCRY_PROD is on")
+	}
+	if !validURL(c.SiteURL, c.Prod) {
+		if c.Prod {
+			return errors.New("SCRY_SITE_URL must be an https URL when SCRY_PROD is on")
+		}
+		return errors.New("SCRY_SITE_URL must be an http(s) URL")
 	}
 	if c.Prod {
 		switch {

@@ -140,14 +140,14 @@ func hasCredential(r *http.Request) bool {
 func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 	at, id, ok := cursor(r)
 	if !ok {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		s.badRequest(w, r, "That page link is malformed.")
 		return
 	}
 	rows, err := s.r.ListLatestItems(r.Context(), db.ListLatestItemsParams{
 		Since: since(), BeforeAt: at, BeforeID: id, Lim: pageSize + 1,
 	})
 	if err != nil {
-		internalError(w, "list latest items", err)
+		s.internalError(w, r, "list latest items", err)
 		return
 	}
 	items := make([]itemView, len(rows))
@@ -161,13 +161,13 @@ func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 	d := itemsData{}
 	d.Items, d.Older = older("/", items)
 	setCache(w, r)
-	s.web.Render(w, r, web.View{Page: "latest", Fragment: "items-page", Title: "Latest", Data: d})
+	s.web.Render(w, r, web.View{Page: "latest", Fragment: "items-page", Title: "Latest", Data: d, Nav: "latest"})
 }
 
 func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.r.ListCatalog(r.Context(), since())
 	if err != nil {
-		internalError(w, "list catalog", err)
+		s.internalError(w, r, "list catalog", err)
 		return
 	}
 	feeds := make([]feedView, len(rows))
@@ -178,34 +178,34 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	setCache(w, r)
-	s.web.Render(w, r, web.View{Page: "catalog", Title: "Feeds", Data: feeds})
+	s.web.Render(w, r, web.View{Page: "catalog", Title: "Feeds", Data: feeds, Nav: "feeds"})
 }
 
 func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 	fid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	at, id, ok := cursor(r)
 	if !ok {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		s.badRequest(w, r, "That page link is malformed.")
 		return
 	}
 	f, err := s.r.GetCatalogFeed(r.Context(), fid)
 	if errors.Is(err, sql.ErrNoRows) {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	if err != nil {
-		internalError(w, "get feed", err)
+		s.internalError(w, r, "get feed", err)
 		return
 	}
 	rows, err := s.r.ListFeedItems(r.Context(), db.ListFeedItemsParams{
 		FeedID: fid, Since: since(), BeforeAt: at, BeforeID: id, Lim: pageSize + 1,
 	})
 	if err != nil {
-		internalError(w, "list feed items", err)
+		s.internalError(w, r, "list feed items", err)
 		return
 	}
 	items := make([]itemView, len(rows))
@@ -220,5 +220,5 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 	d := itemsData{Feed: fv}
 	d.Items, d.Older = older(fmt.Sprintf("/feeds/%d", fid), items)
 	setCache(w, r)
-	s.web.Render(w, r, web.View{Page: "feed", Fragment: "items-page", Title: fv.Name, Data: d})
+	s.web.Render(w, r, web.View{Page: "feed", Fragment: "items-page", Title: fv.Name, Data: d, Nav: "feeds", NavSub: true})
 }

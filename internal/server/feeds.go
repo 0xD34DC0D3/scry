@@ -43,11 +43,11 @@ type feedsData struct {
 func (s *server) renderFeeds(w http.ResponseWriter, r *http.Request, d feedsData, status int) {
 	feeds, err := s.r.ListFeeds(r.Context())
 	if err != nil {
-		internalError(w, "list feeds", err)
+		s.internalError(w, r, "list feeds", err)
 		return
 	}
 	d.Feeds = feeds
-	v := web.View{Page: "feeds", Fragment: "feeds-panel", Title: "Feeds", Data: d}
+	v := web.View{Page: "feeds", Fragment: "feeds-panel", Title: "Manage feeds", Data: d, Nav: "admin", Wide: true}
 	// htmx swaps only 2xx responses by default, so a rejected add answers it
 	// with 200 and the error inside the fragment; a plain post gets the 4xx.
 	if r.Header.Get("HX-Request") != "true" {
@@ -74,10 +74,10 @@ func (s *server) addFeed(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+			s.web.Error(w, r, http.StatusRequestEntityTooLarge, "That request was too large.")
 			return
 		}
-		http.Error(w, "bad request", http.StatusBadRequest)
+		s.badRequest(w, r, "That form could not be read.")
 		return
 	}
 	raw := strings.TrimSpace(r.PostFormValue("url"))
@@ -92,7 +92,7 @@ func (s *server) addFeed(w http.ResponseWriter, r *http.Request) {
 			s.renderFeeds(w, r, feedsData{URL: raw, Error: "That feed is already in the catalog."}, http.StatusConflict)
 			return
 		}
-		internalError(w, "create feed", err)
+		s.internalError(w, r, "create feed", err)
 		return
 	}
 	s.done(w, r)
@@ -104,12 +104,12 @@ func (s *server) feedAction(q func(*db.Queries, context.Context, int64) (int64, 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
-			http.NotFound(w, r)
+			s.notFound(w, r)
 			return
 		}
 		n, err := q(s.w, r.Context(), id)
 		if err != nil {
-			internalError(w, "feed action", err)
+			s.internalError(w, r, "feed action", err)
 			return
 		}
 		if n == 0 {
@@ -128,7 +128,7 @@ func (s *server) feedAction(q func(*db.Queries, context.Context, int64) (int64, 
 func (s *server) syncFeed(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	if _, err := s.r.GetFeed(r.Context(), id); err != nil {
@@ -136,7 +136,7 @@ func (s *server) syncFeed(w http.ResponseWriter, r *http.Request) {
 			s.renderFeeds(w, r, feedsData{Error: "That feed no longer exists."}, http.StatusNotFound)
 			return
 		}
-		internalError(w, "get feed", err)
+		s.internalError(w, r, "get feed", err)
 		return
 	}
 	if _, err := s.jobs.Send(r.Context(), jobs.SyncFeed(id)); err != nil {
@@ -171,9 +171,4 @@ func normalizeFeedURL(raw string) (string, string) {
 		return "", "That URL is too long (at most 2048 bytes once encoded)."
 	}
 	return normalized, ""
-}
-
-func internalError(w http.ResponseWriter, what string, err error) {
-	slog.Error(what, "err", err)
-	http.Error(w, "internal server error", http.StatusInternalServerError)
 }

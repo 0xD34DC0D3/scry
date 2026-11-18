@@ -23,11 +23,11 @@
       <span class="sep" aria-hidden="true">/</span>
       <a class="app" href="/">{{.App}}</a>
     </div>
-    <nav>
-      <a href="/">latest</a>
-      <a href="/feeds">feeds</a>
+    <nav aria-label="Main">
+      <a href="/"{{with .Current "latest"}} aria-current="{{.}}"{{end}}>latest</a>
+      <a href="/feeds"{{with .Current "feeds"}} aria-current="{{.}}"{{end}}>feeds</a>
       {{- if and .User .User.IsAdmin}}
-      <a href="/admin/feeds">admin</a>
+      <a href="/admin/feeds"{{with .Current "admin"}} aria-current="{{.}}"{{end}}>admin</a>
       {{- end}}
     </nav>
     <div class="who">
@@ -43,7 +43,7 @@
       {{- end}}
     </div>
   </header>
-  <main id="main">
+  <main id="main"{{if .Wide}} class="wide"{{end}}>
 {{end}}
 
 {{define "bottom"}}
@@ -55,3 +55,11 @@
 </body>
 </html>
 {{end}}
+
+{{/* The error page (Renderer.Error): .Title is the status text, .Data the
+     message. */}}
+{{define "error"}}{{template "top" .}}
+<h1>{{.Title}}</h1>
+<p>{{.Data}}</p>
+<p><a href="/">Back to {{.App}}</a></p>
+{{template "bottom" .}}{{end}}

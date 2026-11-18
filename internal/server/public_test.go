@@ -276,6 +276,10 @@ func TestPublicPaging(t *testing.T) {
 				if m := olderRe.FindStringSubmatch(body); m != nil {
 					path = strings.ReplaceAll(m[1], "&amp;", "&")
 				}
+				// The end marker shows only where there is no Older link.
+				if hasEnd := strings.Contains(body, "end of 30 days"); hasEnd != (path == "") {
+					t.Errorf("page %d: end marker %v with older %q", pages, hasEnd, path)
+				}
 			}
 			if pages != 3 || len(seen) != n || seen["item-old."] {
 				t.Errorf("pages=%d seen=%d (want 3, %d), old seen=%v", pages, len(seen), n, seen["item-old."])

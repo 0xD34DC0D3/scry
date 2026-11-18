@@ -20,9 +20,6 @@ import (
 	"github.com/0xD34DC0D3/voodoo/voodooauth"
 )
 
-// SiteURL is the org landing page the header tile and footer link to.
-const SiteURL = "https://0xd34dc0d3.dev"
-
 //go:embed layout.html
 var layoutFS embed.FS
 
@@ -75,38 +72,64 @@ func StaticHandler() http.Handler {
 
 // Renderer renders page templates inside the shared layout.
 type Renderer struct {
-	t    *template.Template
-	app  string
-	auth *voodooauth.Client
+	t       *template.Template
+	app     string
+	siteURL string
+	auth    *voodooauth.Client
 }
 
 // New parses the layout plus every *.html in pages into one template set, so
 // feature packages embed only their own templates. Templates are program
-// text, so a parse error panics at startup. auth supplies the login and
-// logout links in the header.
-func New(app string, pages fs.FS, auth *voodooauth.Client) *Renderer {
+// text, so a parse error panics at startup. siteURL is the org website the
+// header tile and footer link to (SCRY_SITE_URL, no trailing slash); auth
+// supplies the login and logout links in the header.
+func New(app, siteURL string, pages fs.FS, auth *voodooauth.Client) *Renderer {
 	t := template.Must(template.ParseFS(layoutFS, "layout.html"))
-	return &Renderer{t: template.Must(t.ParseFS(pages, "*.html")), app: app, auth: auth}
+	return &Renderer{t: template.Must(t.ParseFS(pages, "*.html")), app: app, siteURL: siteURL, auth: auth}
 }
 
 // View describes one response. Page is the full-page template, Fragment the
 // block that alone replaces part of the page for an htmx request. Status is
 // the HTTP status, 200 when zero.
+//
+// Nav names the header link marked aria-current ("latest", "feeds",
+// "admin"); NavSub says the page sits below that link's page (one feed
+// under /feeds), so the link gets aria-current="true" instead of "page".
+// Wide opts into main.wide, for table-heavy pages.
 type View struct {
 	Page     string
 	Fragment string
 	Title    string
 	Data     any
 	Status   int
+	Nav      string
+	NavSub   bool
+	Wide     bool
 }
 
 // page is what templates see: layout fields plus the handler's Data. User
-// is nil when signed out; every page can show who is signed in.
+// is nil when signed out; every page can show who is signed in. Partial is
+// true when only the fragment is rendered (an htmx request).
 type page struct {
 	Title, App, SiteURL, Ver string
 	User                     *voodooauth.User
 	LoginURL, LogoutURL      string
 	Data                     any
+	Nav                      string
+	NavSub, Wide, Partial    bool
+}
+
+// Current is the aria-current value for the header link named nav, or ""
+// when that link is not the current page or section.
+func (p page) Current(nav string) string {
+	switch {
+	case p.Nav != nav || nav == "":
+		return ""
+	case p.NavSub:
+		return "true"
+	default:
+		return "page"
+	}
 }
 
 // Render writes the full page, or just the fragment when the request has
@@ -115,16 +138,17 @@ type page struct {
 // instead of a half-written page.
 func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, v View) {
 	w.Header().Add("Vary", "HX-Request")
-	name := v.Page
+	name, partial := v.Page, false
 	if v.Fragment != "" && req.Header.Get("HX-Request") == "true" {
-		name = v.Fragment
+		name, partial = v.Fragment, true
 	}
 	var buf bytes.Buffer
 	p := page{
-		Title: v.Title, App: r.app, SiteURL: SiteURL, Ver: version, Data: v.Data,
+		Title: v.Title, App: r.app, SiteURL: r.siteURL, Ver: version, Data: v.Data,
 		User:      voodooauth.UserFrom(req.Context()),
 		LoginURL:  r.auth.LoginURL(req),
 		LogoutURL: r.auth.LogoutURL(),
+		Nav:       v.Nav, NavSub: v.NavSub, Wide: v.Wide, Partial: partial,
 	}
 	if err := r.t.ExecuteTemplate(&buf, name, p); err != nil {
 		slog.Error("render", "template", name, "err", err)
@@ -138,4 +162,13 @@ func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, v View) {
 		w.WriteHeader(v.Status)
 	}
 	_, _ = buf.WriteTo(w)
+}
+
+// Error renders the layout's error page: status, its standard text as the
+// heading, and msg below it. Any Cache-Control the handler set is dropped,
+// so an error is never stored. htmx requests get the full page too; htmx
+// does not swap 4xx or 5xx responses by default anyway.
+func (r *Renderer) Error(w http.ResponseWriter, req *http.Request, status int, msg string) {
+	w.Header().Del("Cache-Control")
+	r.Render(w, req, View{Page: "error", Title: http.StatusText(status), Data: msg, Status: status})
 }

@@ -16,7 +16,8 @@ RSS reader in Go, and the source of the org's Go app template. Spec:
 - Stdlib `net/http` and `http.ServeMux`, not echo. voodoo uses echo, so code
   copied from it needs porting.
 - Config is env vars prefixed `SCRY_`, loaded in `internal/config`; refuse
-  unsafe prod settings in `CheckServe`.
+  unsafe prod settings in `CheckServe` (https `SCRY_BASE_URL`,
+  `SCRY_VOODOO_URL`, `SCRY_SITE_URL` in prod).
 - Table tests. Comments say why, not what.
 - Follow the milestone order; record decisions and divergences in `docs/design.md`.
 
@@ -32,7 +33,10 @@ RSS reader in Go, and the source of the org's Go app template. Spec:
 
 - `internal/server`: routes plus plain `func(http.Handler) http.Handler` middleware (log, headers, recover, 64 KB body cap, CSRF via `CrossOriginProtection`). `server.New(db)` is the whole handler.
 - `internal/web`: layout, CSS, fonts, vendored htmx (version and sha256 in `web.go`). `make theme` regenerates `theme.css` from `../website`; do not edit it.
-- Render pages with `web.Renderer.Render` and a `web.View{Page, Fragment, ...}`: full page, or the fragment on `HX-Request`. Every htmx action must also work as a plain form post (POST, 303 redirect).
+- Render pages with `web.Renderer.Render` and a `web.View{Page, Fragment, ...}`: full page, or the fragment on `HX-Request`. `View.Nav` marks the header link `aria-current` (`NavSub` for a page below it); `View.Wide` gives `main.wide`. Every htmx action must also work as a plain form post (POST, 303 redirect).
+- Errors are HTML through the layout, never `http.Error`: `s.notFound`, `s.badRequest`, `s.internalError` (`web.Renderer.Error`, which drops Cache-Control). A catch-all `/` pattern gives unknown paths the 404 page (so a wrong method on a known path is 404, not 405; unmatched requests log as route `/`). Panics get the 500 page from `recoverer`.
+- The layout's org links use `SCRY_SITE_URL` (`config.SiteURL`, passed through `server.New` to `web.New`); never hardcode hosts.
+- htmx buttons: forms set `hx-disabled-elt="find button"`. The Older fragment puts `autofocus` on its first item so htmx moves focus there; style loading with `.htmx-request` (htmx's indicator styles are off).
 - CSP forbids inline script and style: no `hx-on`, no `<script>` bodies, no `style=`. htmx is configured by the `htmx-config` meta tag in `layout.html`.
 - Admin feed catalog: `internal/server/feeds.go`, `views/feeds.html`, under `/admin/feeds` behind `RequireAdmin`. Actions are POST (remove too, so plain forms work). htmx gets the `feeds-panel` fragment; a rejected add answers htmx with 200 and the error inside the fragment (htmx does not swap 4xx), and a plain post with the full page and 400/409. Set `web.View.Status` for a non-200 page.
 - Public views (`internal/server/public.go`, `views/public.html`), signed out: `/` latest items, `/feeds` catalog, `/feeds/{id}` one feed. Excerpts only, never `item_contents.html`; item and `comments_url` URLs go into `href` as plain strings (never `template.URL`). The item meta line shows the link's domain (render time), author, and a "discussion" link. 50 per page, `?before=<first_seen_at>-<id>` cursor; the Older link swaps in the `items-page` fragment. `setCache`: `public, max-age=60` with no credential, `private, no-store` with one; `Vary: HX-Request, Cookie, Authorization`.

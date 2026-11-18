@@ -162,6 +162,12 @@ Every variable is in `deploy/scry.env.example` (production) and
 
 - `SCRY_BASE_URL`, `SCRY_VOODOO_URL`: https in production; scry refuses to
   start otherwise.
+- `SCRY_SITE_URL`: the deadcode website, linked from the header tile and
+  footer (trailing slash trimmed). Defaults to `http://localhost:4321` (the
+  website's dev server), so production must set it, to https; scry refuses
+  to start otherwise. Add it to an existing `/etc/scry/scry.env` before
+  deploying a build that has it: `install.sh` runs `scry doctor`, which
+  fails without it.
 - `SCRY_PORT` (8081) must match the Caddy `reverse_proxy`. `SCRY_BIND`
   defaults to `127.0.0.1`.
 - `INNGEST_SIGNING_KEY`, `INNGEST_EVENT_KEY`: required in production.

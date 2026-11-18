@@ -100,7 +100,7 @@ func TestCheckServe(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &Config{Prod: tc.prod, BaseURL: tc.base, VoodooURL: tc.voodoo,
+			c := &Config{Prod: tc.prod, BaseURL: tc.base, VoodooURL: tc.voodoo, SiteURL: "https://site.example.com",
 				InngestSigningKey: "signkey-prod-x", InngestEventKey: "ek"}
 			if err := c.CheckServe(); (err == nil) != tc.ok {
 				t.Fatalf("CheckServe() error = %v, want ok=%v", err, tc.ok)
@@ -130,7 +130,7 @@ func TestCheckServeInngest(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &Config{Prod: tc.prod, BaseURL: "https://scry.example.com", VoodooURL: "https://auth.example.com",
-				InngestSigningKey: tc.sign, InngestEventKey: tc.event, InngestDev: tc.dv}
+				SiteURL: "https://site.example.com", InngestSigningKey: tc.sign, InngestEventKey: tc.event, InngestDev: tc.dv}
 			if err := c.CheckServe(); (err == nil) != tc.ok {
 				t.Fatalf("CheckServe() error = %v, want ok=%v", err, tc.ok)
 			}
@@ -149,5 +149,64 @@ func TestLoadInngest(t *testing.T) {
 	}
 	if cfg.InngestSigningKey != "signkey-test-x" || cfg.InngestEventKey != "ek" || cfg.InngestDev != "http://127.0.0.1:8288" {
 		t.Fatalf("got %+v", cfg)
+	}
+}
+
+// SiteURL is linked from every page: trailing slashes are trimmed (the
+// layout appends "/"), and the localhost default is refused in prod.
+func TestLoadSiteURL(t *testing.T) {
+	cases := []struct {
+		name string
+		set  bool
+		env  string
+		want string
+	}{
+		{"unset defaults to the local website", false, "", "http://localhost:4321"},
+		{"empty means the default", true, "", "http://localhost:4321"},
+		{"trailing slash trimmed", true, "https://site.example.com/", "https://site.example.com"},
+		{"kept as given", true, "https://site.example.com", "https://site.example.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SCRY_DB_PATH", "/tmp/scry-test.db")
+			t.Setenv("SCRY_SITE_URL", tc.env)
+			if !tc.set {
+				os.Unsetenv("SCRY_SITE_URL")
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.SiteURL != tc.want {
+				t.Fatalf("SiteURL = %q, want %q", cfg.SiteURL, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckServeSiteURL(t *testing.T) {
+	cases := []struct {
+		name string
+		prod bool
+		site string
+		ok   bool
+	}{
+		{"dev accepts the http default", false, "http://localhost:4321", true},
+		{"dev accepts https", false, "https://site.example.com", true},
+		{"dev rejects a missing scheme", false, "localhost:4321", false},
+		{"dev rejects empty", false, "", false},
+		{"prod accepts https", true, "https://site.example.com", true},
+		{"prod rejects the http default", true, "http://localhost:4321", false},
+		{"prod rejects missing host", true, "https://", false},
+		{"prod rejects empty", true, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{Prod: tc.prod, BaseURL: "https://scry.example.com", VoodooURL: "https://auth.example.com",
+				SiteURL: tc.site, InngestSigningKey: "signkey-prod-x", InngestEventKey: "ek"}
+			if err := c.CheckServe(); (err == nil) != tc.ok {
+				t.Fatalf("CheckServe() error = %v, want ok=%v", err, tc.ok)
+			}
+		})
 	}
 }

@@ -237,8 +237,10 @@ header nav a {
   border: var(--b-sm) solid transparent;
 }
 
+/* "page" on the current page, "true" on a page below it (one feed under
+   /feeds): both light the link up */
 header nav a:hover,
-header nav a[aria-current="page"] {
+header nav a[aria-current] {
   background: var(--accent);
   border-color: var(--ink);
 }
@@ -976,11 +978,33 @@ main:has(> .auth) {
   border-bottom: 1px solid var(--rule);
 }
 
-.item h3 {
-  font-size: 1.125rem;
-  line-height: 1.3;
+/* item titles are h2 (no level skipped under the page's h1), so undo the
+   h2 eyebrow style */
+.item h2 {
+  font: 700 1.125rem/1.3 var(--sans);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+  border: 0;
+  padding: 0;
   margin: 0 0 0.25rem;
   overflow-wrap: anywhere;
+}
+
+/* a list of titles reads better unruled: underline only on hover/focus,
+   and visited ones fade */
+.item h2 a {
+  text-decoration: none;
+}
+
+.item h2 a:hover,
+.item h2 a:focus-visible {
+  text-decoration: underline;
+  text-decoration-color: var(--info);
+}
+
+.item h2 a:visited {
+  color: var(--muted);
 }
 
 .item-meta,
@@ -1005,4 +1029,56 @@ main:has(> .auth) {
 
 .items .more {
   padding-top: var(--s4);
+}
+
+/* htmx puts .htmx-request on the Older link while it loads (its own
+   indicator styles are off for the CSP); this is the loading state and
+   stops a second click */
+.items .more a.htmx-request {
+  opacity: 0.6;
+  cursor: progress;
+  pointer-events: none;
+}
+
+.items .more a.htmx-request::after {
+  content: "…";
+}
+
+.items .end {
+  padding-top: var(--s4);
+  text-align: center;
+  font: 0.75rem var(--mono);
+  color: var(--muted);
+}
+
+/* long feed URLs and errors must wrap inside table cells */
+td code {
+  overflow-wrap: anywhere;
+}
+
+.last-error summary {
+  cursor: pointer;
+  font: 700 0.75rem var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.last-error code {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 600px) {
+  /* a sticky header eats too much of a phone screen */
+  header {
+    position: static;
+  }
+
+  /* the links in an item's meta line (feed, discussion) are small text; pad them to a
+     comfortable tap target without changing the markup */
+  .item-meta a {
+    display: inline-block;
+    padding: 0.625rem 0;
+  }
 }
