@@ -102,6 +102,11 @@ not configured yet.
 Done: an admin adds a feed URL in the browser and sees it listed; a
 non-admin cannot.
 
+Done 2026-11-17 (scry 52be3aa): `/healthz` 200 in production; an admin added
+a feed in the browser and saw it listed; a non-admin got 403; signed out
+gets 401 and a cross-origin POST 403. Inngest re-synced with zero functions.
+Off-box backups still not configured.
+
 ## 3. Fetch one feed
 
 - `syncFeed {feed_id}`: safe fetch (conditional GET, timeout, 10 MB cap,
