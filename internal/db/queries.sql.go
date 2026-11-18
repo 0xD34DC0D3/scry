@@ -155,6 +155,31 @@ func (q *Queries) FeedSynced(ctx context.Context, arg FeedSyncedParams) (int64, 
 	return result.RowsAffected()
 }
 
+const getCatalogFeed = `-- name: GetCatalogFeed :one
+SELECT id, url, title, site_url, disabled_at FROM feeds WHERE id = ?
+`
+
+type GetCatalogFeedRow struct {
+	ID         int64
+	Url        string
+	Title      string
+	SiteUrl    string
+	DisabledAt sql.NullInt64
+}
+
+func (q *Queries) GetCatalogFeed(ctx context.Context, id int64) (GetCatalogFeedRow, error) {
+	row := q.db.QueryRowContext(ctx, getCatalogFeed, id)
+	var i GetCatalogFeedRow
+	err := row.Scan(
+		&i.ID,
+		&i.Url,
+		&i.Title,
+		&i.SiteUrl,
+		&i.DisabledAt,
+	)
+	return i, err
+}
+
 const getFeed = `-- name: GetFeed :one
 SELECT id, url, title, site_url, etag, last_modified, next_fetch_at, fail_count, last_error, disabled_at FROM feeds WHERE id = ?
 `
@@ -175,6 +200,120 @@ func (q *Queries) GetFeed(ctx context.Context, id int64) (Feed, error) {
 		&i.DisabledAt,
 	)
 	return i, err
+}
+
+const listCatalog = `-- name: ListCatalog :many
+SELECT f.id, f.url, f.title, f.site_url, f.disabled_at,
+       (SELECT count(*) FROM items i
+        WHERE i.feed_id = f.id AND i.first_seen_at >= ?1) AS recent_items
+FROM feeds f
+ORDER BY f.title = '', f.title COLLATE NOCASE, f.url
+`
+
+type ListCatalogRow struct {
+	ID          int64
+	Url         string
+	Title       string
+	SiteUrl     string
+	DisabledAt  sql.NullInt64
+	RecentItems int64
+}
+
+// Every feed, paused ones included (shown as paused), untitled ones last.
+func (q *Queries) ListCatalog(ctx context.Context, since int64) ([]ListCatalogRow, error) {
+	rows, err := q.db.QueryContext(ctx, listCatalog, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCatalogRow{}
+	for rows.Next() {
+		var i ListCatalogRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Url,
+			&i.Title,
+			&i.SiteUrl,
+			&i.DisabledAt,
+			&i.RecentItems,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFeedItems = `-- name: ListFeedItems :many
+SELECT i.id, i.feed_id, i.url, i.title, i.first_seen_at,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt
+FROM items i
+LEFT JOIN item_contents c ON c.item_id = i.id
+WHERE i.feed_id = ?1
+  AND i.first_seen_at >= ?2
+  AND i.first_seen_at <= ?3
+  AND (i.first_seen_at < ?3 OR i.id < ?4)
+ORDER BY i.first_seen_at DESC, i.id DESC
+LIMIT ?5
+`
+
+type ListFeedItemsParams struct {
+	FeedID   int64
+	Since    int64
+	BeforeAt int64
+	BeforeID int64
+	Lim      int64
+}
+
+type ListFeedItemsRow struct {
+	ID          int64
+	FeedID      int64
+	Url         string
+	Title       string
+	FirstSeenAt int64
+	Excerpt     string
+}
+
+func (q *Queries) ListFeedItems(ctx context.Context, arg ListFeedItemsParams) ([]ListFeedItemsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFeedItems,
+		arg.FeedID,
+		arg.Since,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFeedItemsRow{}
+	for rows.Next() {
+		var i ListFeedItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Url,
+			&i.Title,
+			&i.FirstSeenAt,
+			&i.Excerpt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listFeeds = `-- name: ListFeeds :many
@@ -203,6 +342,81 @@ func (q *Queries) ListFeeds(ctx context.Context) ([]Feed, error) {
 			&i.FailCount,
 			&i.LastError,
 			&i.DisabledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLatestItems = `-- name: ListLatestItems :many
+
+SELECT i.id, i.feed_id, i.url, i.title, i.first_seen_at,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt,
+       f.title AS feed_title, f.url AS feed_url
+FROM items i
+JOIN feeds f ON f.id = i.feed_id
+LEFT JOIN item_contents c ON c.item_id = i.id
+WHERE i.first_seen_at >= ?1
+  AND i.first_seen_at <= ?2
+  AND (i.first_seen_at < ?2 OR i.id < ?3)
+ORDER BY i.first_seen_at DESC, i.id DESC
+LIMIT ?4
+`
+
+type ListLatestItemsParams struct {
+	Since    int64
+	BeforeAt int64
+	BeforeID int64
+	Lim      int64
+}
+
+type ListLatestItemsRow struct {
+	ID          int64
+	FeedID      int64
+	Url         string
+	Title       string
+	FirstSeenAt int64
+	Excerpt     string
+	FeedTitle   string
+	FeedUrl     string
+}
+
+// Public views (internal/server/public.go). Lists cover first_seen_at >= since
+// (30 days back), newest first. Paging is a keyset cursor on
+// (first_seen_at, id): the first page passes the max int64 for both. The
+// upper bound on first_seen_at keeps the index range tight; the OR only
+// breaks ties. id is the rowid, so both indexes already end in it.
+func (q *Queries) ListLatestItems(ctx context.Context, arg ListLatestItemsParams) ([]ListLatestItemsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLatestItems,
+		arg.Since,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLatestItemsRow{}
+	for rows.Next() {
+		var i ListLatestItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Url,
+			&i.Title,
+			&i.FirstSeenAt,
+			&i.Excerpt,
+			&i.FeedTitle,
+			&i.FeedUrl,
 		); err != nil {
 			return nil, err
 		}

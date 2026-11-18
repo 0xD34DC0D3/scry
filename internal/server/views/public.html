@@ -1,0 +1,59 @@
+{{/* Public views: latest items, the catalog, one feed's items. Excerpts are
+     plain text; titles and URLs go through html/template's escaping, so a
+     javascript: item URL renders as #ZgotmplZ. "items-page" is the fragment
+     the "Older" link fetches with htmx and swaps in place of itself. */}}
+{{define "latest"}}{{template "top" .}}
+<h1>Latest</h1>
+{{template "item-list" .}}
+{{template "bottom" .}}{{end}}
+
+{{define "feed"}}{{template "top" .}}
+{{with .Data.Feed}}
+<h1>{{.Name}}</h1>
+<p class="backlink"><a href="/feeds">cd ..</a> <span class="path">/feeds</span></p>
+<p class="feed-meta">
+  {{if .Paused}}<span class="badge off">paused</span>{{end}}
+  {{with .SiteURL}}<a href="{{.}}">site</a>{{end}}
+  <a href="{{.URL}}">feed</a>
+</p>
+{{end}}
+{{template "item-list" .}}
+{{template "bottom" .}}{{end}}
+
+{{define "item-list"}}{{if .Data.Items}}
+<ol class="items">{{template "items-page" .}}</ol>
+{{else}}
+<p class="empty">Nothing in the last 30 days.</p>
+{{end}}{{end}}
+
+{{define "items-page"}}{{$feedPage := .Data.Feed}}{{range .Data.Items}}
+<li class="item">
+  <h3>{{if .URL}}<a href="{{.URL}}">{{or .Title .URL}}</a>{{else}}{{or .Title "(untitled)"}}{{end}}</h3>
+  <p class="item-meta"><time datetime="{{.Seen.Format "2006-01-02T15:04:05Z"}}">{{.Seen.Format "2006-01-02 15:04"}} UTC</time>{{if not $feedPage}} · <a href="/feeds/{{.FeedID}}">{{.FeedName}}</a>{{end}}</p>
+  {{with .Excerpt}}<p class="excerpt">{{.}}</p>{{end}}
+</li>
+{{end}}{{with .Data.Older}}
+<li class="more"><a class="btn" href="{{.}}" hx-get="{{.}}" hx-target="closest li" hx-swap="outerHTML">Older</a></li>
+{{end}}{{end}}
+
+{{define "catalog"}}{{template "top" .}}
+<h1>Feeds</h1>
+{{with .Data}}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Feed</th><th>Last 30 days</th><th>Status</th></tr></thead>
+    <tbody>
+    {{range .}}
+      <tr>
+        <td data-label="Feed"><a href="/feeds/{{.ID}}">{{.Name}}</a>{{with .SiteURL}}<br><code>{{.}}</code>{{end}}</td>
+        <td data-label="Last 30 days">{{.RecentItems}}</td>
+        <td data-label="Status">{{if .Paused}}<span class="badge off">paused</span>{{else}}<span class="badge">active</span>{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{else}}
+<p class="empty">No feeds yet.</p>
+{{end}}
+{{template "bottom" .}}{{end}}

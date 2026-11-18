@@ -1,0 +1,205 @@
+package server
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"math"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/0xD34DC0D3/voodoo/voodooauth"
+
+	"github.com/0xD34DC0D3/scry/internal/db"
+	"github.com/0xD34DC0D3/scry/internal/web"
+)
+
+// The public views, open to everyone: latest items across feeds, the
+// catalog, and one feed's items. Excerpts only (plain text), linking out;
+// item_contents.html is for signed-in readers (step 6).
+
+const (
+	// window is how far back the lists reach, by first_seen_at.
+	window = 30 * 24 * time.Hour
+	// pageSize items per page; an "older" link fetches the next page.
+	pageSize = 50
+	// publicCache lets browsers (and any shared cache) reuse an anonymous
+	// page for a minute: feeds sync hourly at most, so a minute is never
+	// meaningfully stale, and it absorbs reload storms.
+	publicCache = "public, max-age=60"
+	// privateCache: a request carrying a credential gets a page naming the
+	// user, which nothing may store.
+	privateCache = "private, no-store"
+)
+
+func (s *server) publicRoutes(mux *http.ServeMux) {
+	// {$} so only "/" matches; a bare "/" would answer every unknown path.
+	mux.HandleFunc("GET /{$}", s.latest)
+	mux.HandleFunc("GET /feeds", s.catalog)
+	mux.HandleFunc("GET /feeds/{id}", s.feedItems)
+}
+
+// itemView is one list entry. URL goes into href through html/template's
+// normal escaping, so a javascript: link from a feed renders as #ZgotmplZ.
+type itemView struct {
+	ID, FeedID          int64
+	URL, Title, Excerpt string
+	FeedName            string // empty on a feed's own page
+	Seen                time.Time
+}
+
+type feedView struct {
+	ID          int64
+	Name        string // title, or the URL when the feed has none yet
+	URL         string
+	SiteURL     string
+	Paused      bool
+	RecentItems int64
+}
+
+type itemsData struct {
+	Feed  *feedView // nil on the latest page
+	Items []itemView
+	Older string // next page's URL, empty on the last page
+}
+
+func feedName(title, url string) string {
+	if title != "" {
+		return title
+	}
+	return url
+}
+
+// cursor reads ?before=<first_seen_at>-<id>. The first page has none and
+// starts above every row.
+func cursor(r *http.Request) (at, id int64, ok bool) {
+	v := r.URL.Query().Get("before")
+	if v == "" {
+		return math.MaxInt64, math.MaxInt64, true
+	}
+	a, b, found := strings.Cut(v, "-")
+	if !found {
+		return 0, 0, false
+	}
+	at, err1 := strconv.ParseInt(a, 10, 64)
+	id, err2 := strconv.ParseInt(b, 10, 64)
+	return at, id, err1 == nil && err2 == nil
+}
+
+// older returns the next page's URL when the query, asked for one row more
+// than a page, filled it.
+func older(path string, items []itemView) ([]itemView, string) {
+	if len(items) <= pageSize {
+		return items, ""
+	}
+	last := pageSize - 1
+	return items[:pageSize], fmt.Sprintf("%s?before=%d-%d", path, items[last].Seen.Unix(), items[last].ID)
+}
+
+func since() int64 { return time.Now().Add(-window).Unix() }
+
+// setCache marks a public page. Anything carrying a credential is never
+// stored, even when voodoo rejected it or was down and the page came out
+// anonymous. Vary on Cookie and Authorization so a stored anonymous page is
+// never handed to a request that carries one (a browser that just signed
+// in, say); Render adds Vary: HX-Request for fragment vs full page.
+func setCache(w http.ResponseWriter, r *http.Request) {
+	h := w.Header()
+	h.Add("Vary", "Cookie")
+	h.Add("Vary", "Authorization")
+	if hasCredential(r) || voodooauth.UserFrom(r.Context()) != nil {
+		h.Set("Cache-Control", privateCache)
+		return
+	}
+	h.Set("Cache-Control", publicCache)
+}
+
+func hasCredential(r *http.Request) bool {
+	if ck, err := r.Cookie(voodooauth.CookieName); err == nil && ck.Value != "" {
+		return true
+	}
+	return r.Header.Get("Authorization") != ""
+}
+
+func (s *server) latest(w http.ResponseWriter, r *http.Request) {
+	at, id, ok := cursor(r)
+	if !ok {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	rows, err := s.r.ListLatestItems(r.Context(), db.ListLatestItemsParams{
+		Since: since(), BeforeAt: at, BeforeID: id, Lim: pageSize + 1,
+	})
+	if err != nil {
+		internalError(w, "list latest items", err)
+		return
+	}
+	items := make([]itemView, len(rows))
+	for i, it := range rows {
+		items[i] = itemView{
+			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
+			FeedName: feedName(it.FeedTitle, it.FeedUrl), Seen: time.Unix(it.FirstSeenAt, 0).UTC(),
+		}
+	}
+	d := itemsData{}
+	d.Items, d.Older = older("/", items)
+	setCache(w, r)
+	s.web.Render(w, r, web.View{Page: "latest", Fragment: "items-page", Title: "Latest", Data: d})
+}
+
+func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.r.ListCatalog(r.Context(), since())
+	if err != nil {
+		internalError(w, "list catalog", err)
+		return
+	}
+	feeds := make([]feedView, len(rows))
+	for i, f := range rows {
+		feeds[i] = feedView{
+			ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl,
+			Paused: f.DisabledAt.Valid, RecentItems: f.RecentItems,
+		}
+	}
+	setCache(w, r)
+	s.web.Render(w, r, web.View{Page: "catalog", Title: "Feeds", Data: feeds})
+}
+
+func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
+	fid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	at, id, ok := cursor(r)
+	if !ok {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	f, err := s.r.GetCatalogFeed(r.Context(), fid)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		internalError(w, "get feed", err)
+		return
+	}
+	rows, err := s.r.ListFeedItems(r.Context(), db.ListFeedItemsParams{
+		FeedID: fid, Since: since(), BeforeAt: at, BeforeID: id, Lim: pageSize + 1,
+	})
+	if err != nil {
+		internalError(w, "list feed items", err)
+		return
+	}
+	items := make([]itemView, len(rows))
+	for i, it := range rows {
+		items[i] = itemView{ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID, Seen: time.Unix(it.FirstSeenAt, 0).UTC()}
+	}
+	fv := &feedView{ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl, Paused: f.DisabledAt.Valid}
+	d := itemsData{Feed: fv}
+	d.Items, d.Older = older(fmt.Sprintf("/feeds/%d", fid), items)
+	setCache(w, r)
+	s.web.Render(w, r, web.View{Page: "feed", Fragment: "items-page", Title: fv.Name, Data: d})
+}

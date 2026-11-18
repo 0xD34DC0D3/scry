@@ -80,3 +80,45 @@ INSERT INTO item_contents (item_id, html, excerpt, fetched_at)
 VALUES (?, ?, ?, ?)
 ON CONFLICT (item_id) DO UPDATE
 SET html = excluded.html, excerpt = excluded.excerpt, fetched_at = excluded.fetched_at;
+
+-- Public views (internal/server/public.go). Lists cover first_seen_at >= since
+-- (30 days back), newest first. Paging is a keyset cursor on
+-- (first_seen_at, id): the first page passes the max int64 for both. The
+-- upper bound on first_seen_at keeps the index range tight; the OR only
+-- breaks ties. id is the rowid, so both indexes already end in it.
+
+-- name: ListLatestItems :many
+SELECT i.id, i.feed_id, i.url, i.title, i.first_seen_at,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt,
+       f.title AS feed_title, f.url AS feed_url
+FROM items i
+JOIN feeds f ON f.id = i.feed_id
+LEFT JOIN item_contents c ON c.item_id = i.id
+WHERE i.first_seen_at >= sqlc.arg(since)
+  AND i.first_seen_at <= sqlc.arg(before_at)
+  AND (i.first_seen_at < sqlc.arg(before_at) OR i.id < sqlc.arg(before_id))
+ORDER BY i.first_seen_at DESC, i.id DESC
+LIMIT sqlc.arg(lim);
+
+-- name: ListFeedItems :many
+SELECT i.id, i.feed_id, i.url, i.title, i.first_seen_at,
+       CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt
+FROM items i
+LEFT JOIN item_contents c ON c.item_id = i.id
+WHERE i.feed_id = sqlc.arg(feed_id)
+  AND i.first_seen_at >= sqlc.arg(since)
+  AND i.first_seen_at <= sqlc.arg(before_at)
+  AND (i.first_seen_at < sqlc.arg(before_at) OR i.id < sqlc.arg(before_id))
+ORDER BY i.first_seen_at DESC, i.id DESC
+LIMIT sqlc.arg(lim);
+
+-- Every feed, paused ones included (shown as paused), untitled ones last.
+-- name: ListCatalog :many
+SELECT f.id, f.url, f.title, f.site_url, f.disabled_at,
+       (SELECT count(*) FROM items i
+        WHERE i.feed_id = f.id AND i.first_seen_at >= sqlc.arg(since)) AS recent_items
+FROM feeds f
+ORDER BY f.title = '', f.title COLLATE NOCASE, f.url;
+
+-- name: GetCatalogFeed :one
+SELECT id, url, title, site_url, disabled_at FROM feeds WHERE id = ?;

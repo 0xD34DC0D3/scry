@@ -23,6 +23,13 @@
       <span class="sep" aria-hidden="true">/</span>
       <a class="app" href="/">{{.App}}</a>
     </div>
+    <nav>
+      <a href="/">latest</a>
+      <a href="/feeds">feeds</a>
+      {{- if and .User .User.IsAdmin}}
+      <a href="/admin/feeds">admin</a>
+      {{- end}}
+    </nav>
     <div class="who">
       {{- with .User}}
       <span>{{.Email}}</span>

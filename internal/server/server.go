@@ -50,14 +50,8 @@ func New(d *db.DB, auth *voodooauth.Client, jc inngestgo.Client) http.Handler {
 	mux.Handle("GET /static/", web.StaticHandler())
 	// No method: the SDK answers GET (inspect), POST (call) and PUT (sync).
 	mux.Handle(jobs.Path, jc.Serve())
-	// {$} so only "/" matches; a bare "/" would answer every unknown path.
-	mux.HandleFunc("GET /{$}", s.home)
+	s.publicRoutes(mux)
 	s.feedRoutes(mux)
 
 	return chain(recordRoute(mux), requestLogger, securityHeaders, recoverer, limitBody, crossOrigin, skipJobs(auth.Middleware))
-}
-
-// home is a placeholder until step 5 builds the public views.
-func (s *server) home(w http.ResponseWriter, r *http.Request) {
-	s.web.Render(w, r, web.View{Page: "home", Title: "Home"})
 }
