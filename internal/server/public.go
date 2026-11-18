@@ -48,7 +48,7 @@ func (s *server) publicRoutes(mux *http.ServeMux) {
 type itemView struct {
 	ID, FeedID          int64
 	URL, Title, Excerpt string
-	Domain              string // URL's host, for telling sources apart
+	Domain              string // URL's host unless it is the feed's own, for telling sources apart
 	Author, CommentsURL string
 	FeedName            string // empty on a feed's own page
 	Seen                time.Time
@@ -62,6 +62,19 @@ func domain(s string) string {
 		return ""
 	}
 	return strings.TrimPrefix(u.Hostname(), "www.")
+}
+
+// linkDomain is domain(link), or "" when it equals the host of any of own
+// (the feed's URLs): on a site's own feed the domain says nothing, but on an
+// aggregator it is the most useful field, and there it differs.
+func linkDomain(link string, own ...string) string {
+	d := domain(link)
+	for _, o := range own {
+		if d != "" && strings.EqualFold(d, domain(o)) {
+			return ""
+		}
+	}
+	return d
 }
 
 type feedView struct {
@@ -201,7 +214,7 @@ func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 	for i, it := range rows {
 		items[i] = itemView{
 			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
-			Domain: domain(it.Url), Author: it.Author, CommentsURL: it.CommentsUrl,
+			Domain: linkDomain(it.Url, it.FeedUrl), Author: it.Author, CommentsURL: it.CommentsUrl,
 			FeedName: feedName(it.FeedTitle, it.FeedUrl), Seen: time.Unix(it.FirstSeenAt, 0).UTC(),
 		}
 	}
@@ -262,7 +275,7 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 	for i, it := range rows {
 		items[i] = itemView{
 			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
-			Domain: domain(it.Url), Author: it.Author, CommentsURL: it.CommentsUrl,
+			Domain: linkDomain(it.Url, f.SiteUrl, f.Url), Author: it.Author, CommentsURL: it.CommentsUrl,
 			Seen: time.Unix(it.FirstSeenAt, 0).UTC(),
 		}
 	}

@@ -1029,6 +1029,13 @@ main:has(> .auth) {
   margin: 0 0 var(--s1);
 }
 
+/* the item line carries up to five fields, so it gets more size than the
+   feed header's; --muted on --canvas is 6.6:1, past AA's 4.5:1 */
+.item-meta {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
 .feed-meta {
   display: flex;
   flex-wrap: wrap;

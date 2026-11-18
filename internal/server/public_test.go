@@ -294,6 +294,32 @@ func TestPublicPaging(t *testing.T) {
 	}
 }
 
+func TestLinkDomain(t *testing.T) {
+	tests := []struct {
+		name string
+		link string
+		own  []string
+		want string
+	}{
+		{"same host", "https://a.example/1", []string{"https://a.example/feed"}, ""},
+		{"www ignored", "https://www.a.example/1", []string{"https://a.example/feed"}, ""},
+		{"own www ignored", "https://a.example/1", []string{"https://www.a.example/"}, ""},
+		{"case ignored", "https://A.example/1", []string{"https://a.example/feed"}, ""},
+		{"aggregator", "https://other.example/1", []string{"https://news.example/rss"}, "other.example"},
+		{"subdomain differs", "https://blog.a.example/1", []string{"https://a.example/"}, "blog.a.example"},
+		{"matches second", "https://a.example/1", []string{"", "https://a.example/feed"}, ""},
+		{"no own", "https://a.example/1", nil, "a.example"},
+		{"unparsable link", "javascript:alert(1)", []string{"https://a.example/"}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := linkDomain(tc.link, tc.own...); got != tc.want {
+				t.Errorf("linkDomain(%q, %v) = %q, want %q", tc.link, tc.own, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDomain(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"https://www.example.com/a", "example.com"},
@@ -329,7 +355,7 @@ func TestPublicItemMeta(t *testing.T) {
 	for _, path := range []string{"/", fmt.Sprintf("/feeds/%d", f.a.ID), fmt.Sprintf("/feeds/%d", f.b.ID)} {
 		t.Run(path, func(t *testing.T) {
 			body := do(f.h, get(path, "", nil)).Body.String()
-			want := []string{` · a.example`, ` · by Ann`, `<a href="https://talk.example/t?id=2&amp;amp=1">discussion</a>`, ` · w.example`}
+			want := []string{` · by Ann`, `<a href="https://talk.example/t?id=2&amp;amp=1">discussion</a>`, ` · w.example`}
 			if path == fmt.Sprintf("/feeds/%d", f.b.ID) {
 				want = []string{`<a href="#ZgotmplZ">discussion</a>`}
 			}
