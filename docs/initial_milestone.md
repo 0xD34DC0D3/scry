@@ -145,6 +145,12 @@ pointing at a dead URL backs off and is disabled after 10 failures.
 Done: signed out, the three pages render with real data; caching headers
 are set.
 
+Done 2026-11-18 (scry c2eb29d; checked in production on 6073705): signed
+out, `/`, `/feeds` and `/feeds/1` return 200 with HN items and
+`Cache-Control: public, max-age=60`, `Vary: Cookie, Authorization,
+HX-Request`; with a cookie, `private, no-store`. Off-box backups still not
+configured.
+
 ## 6. Reading
 
 - Subscribe and unsubscribe. Subscribed items with full sanitized HTML.
@@ -155,12 +161,21 @@ are set.
 Done: a user subscribes to two feeds, reads items, marks all read, and the
 unread count is right after a new sync.
 
+Built 2026-11-18 (scry 32effe3), deployed; production done check pending.
+Built in parallel with step 7 (one git worktree each) and rebased onto the
+owner's UX commits 726fb81..6073705; see design.md. Done check passed
+against a local voodoo, scry and Inngest dev server with five real feeds.
+
 ## 7. Pruning
 
 - Daily cron: delete `item_contents` and `item_reads` older than 30 days, in
   batches.
 
 Done: test with old rows shows them pruned in batches and newer rows kept.
+
+Done 2026-11-18 (scry 8091449): `TestPrune` shows batches of 500, 500, 7
+and newer rows kept. Deployed with 6073705; the `prune` function runs only
+after the Inngest app is re-synced (manual, dashboard), not yet done.
 
 ## 8. Ship
 
