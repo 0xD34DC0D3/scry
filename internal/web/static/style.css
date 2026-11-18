@@ -79,6 +79,68 @@
   --s6: 3.5rem;
 }
 
+/* ------------------------------------------------------------ dark mode
+   Follows the OS. theme.css is light-only (generated), so redefine the
+   tokens scry uses; the brutalist shadows are built from --color-ink, so
+   they flip to light offsets and still read on a dark canvas. Accent lime
+   stays put, which means anything painted on accent/tint needs dark text
+   regardless of theme: --on-accent. Overrides are prefixed with :root so
+   they outrank the later light-mode rules without touching them. */
+
+:root {
+  color-scheme: light dark;
+  --on-accent: #0b0b0b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #0e0e0c;
+    --color-surface: #1a1a17;
+    --color-ink: #f2f1ec;
+    --color-muted: #a9a89f;
+    --color-rule: #55544d;
+    --color-info: #8c9dff; /* link underline + focus ring need 3:1 on dark */
+  }
+
+  /* text on accent / tint fills */
+  :root ::selection,
+  :root .skip:focus,
+  :root a:not(.btn):hover,
+  :root .brand .tile,
+  :root header nav a:hover,
+  :root header nav a[aria-current],
+  :root button:not(.ghost):not(.danger),
+  :root .badge.attn,
+  :root .flash,
+  :root .secret,
+  :root .consent .warn {
+    color: var(--on-accent);
+  }
+
+  /* hover states that do not paint accent keep ink text */
+  :root .cards a:hover,
+  :root .brand a:hover {
+    color: var(--ink);
+  }
+
+  /* the ink-coloured footer would be a glaring light bar; keep it dark */
+  :root footer {
+    background: var(--surface);
+    color: var(--ink);
+  }
+
+  /* inverted code block inside the accent box: stay dark, text light */
+  :root .secret pre {
+    background: var(--on-accent);
+    color: var(--color-ink);
+  }
+
+  /* dot-grid texture at full ink is too loud on dark */
+  :root main:has(> .auth) {
+    background-image: radial-gradient(var(--rule) 1px, transparent 1px);
+  }
+}
+
 * {
   box-sizing: border-box;
 }
