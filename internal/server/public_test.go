@@ -475,3 +475,66 @@ func TestPublicPostedAt(t *testing.T) {
 		}
 	})
 }
+
+// One table for both precisions: items (toMinute) and the catalog's last
+// post (toDay).
+func TestAgo(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	back := func(d time.Duration) time.Time { return now.Add(-d) }
+	tests := []struct {
+		name string
+		t    time.Time
+		p    agoPrecision
+		want string
+	}{
+		{"never", time.Time{}, toMinute, ""},
+		{"never, days", time.Time{}, toDay, ""},
+		{"future", back(-time.Hour), toMinute, "just now"},
+		{"future, days", back(-time.Hour), toDay, "today"},
+		{"now", now, toMinute, "just now"},
+		{"59s", back(59 * time.Second), toMinute, "just now"},
+		{"1m", back(time.Minute), toMinute, "1m ago"},
+		{"59m59s", back(time.Hour - time.Second), toMinute, "59m ago"},
+		{"1h", back(time.Hour), toMinute, "1h ago"},
+		{"23h59m", back(24*time.Hour - time.Minute), toMinute, "23h ago"},
+		{"hours, days", back(3 * time.Hour), toDay, "today"},
+		{"24h", back(24 * time.Hour), toMinute, "yesterday"},
+		{"30h, days", back(30 * time.Hour), toDay, "yesterday"},
+		{"47h", back(47 * time.Hour), toMinute, "yesterday"},
+		{"2 days", back(48 * time.Hour), toMinute, "2 days ago"},
+		{"5 days, days", back(5 * 24 * time.Hour), toDay, "5 days ago"},
+		{"under 7 days", back(7*24*time.Hour - time.Minute), toMinute, "6 days ago"},
+		{"7 days", back(7 * 24 * time.Hour), toMinute, "Nov 10"},
+		{"14 days, days", back(14 * 24 * time.Hour), toDay, "Nov 3"},
+		{"this year, days", time.Date(2026, 1, 9, 0, 0, 0, 0, time.UTC), toDay, "Jan 9"},
+		{"last year", back(330 * 24 * time.Hour), toMinute, "Dec 22, 2025"},
+		{"earlier year, days", time.Date(2025, 12, 30, 0, 0, 0, 0, time.UTC), toDay, "Dec 30, 2025"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ago(tc.t, now, tc.p); got != tc.want {
+				t.Errorf("ago(%v, %v) = %q, want %q", tc.t, tc.p, got, tc.want)
+			}
+		})
+	}
+	// A zoned now still dates in UTC, like the title attribute.
+	zoned := time.Date(2026, 1, 20, 0, 0, 0, 0, time.FixedZone("x", -5*3600))
+	if got := ago(time.Date(2026, 1, 1, 0, 30, 0, 0, time.UTC), zoned, toMinute); got != "Jan 1" {
+		t.Errorf("zoned now: %q", got)
+	}
+}
+
+// The meta line shows relative time, keeping the machine-readable datetime
+// and putting the absolute UTC time in title.
+func TestPublicRelativeTime(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	fd := seedFeed(t, d, "https://rel.example/feed")
+	seen := time.Now().Add(-3*time.Hour - 5*time.Minute).Truncate(time.Second).UTC()
+	seedItemAt(t, d, fd.ID, "r", "https://rel.example/r", "Rel", "", seen.Unix())
+	want := `<time datetime="` + seen.Format(time.RFC3339) + `" title="` + seen.Format("2006-01-02 15:04") + ` UTC">3h ago</time>`
+	for _, path := range []string{"/", fmt.Sprintf("/feeds/%d", fd.ID)} {
+		if body := do(h, get(path, "", nil)).Body.String(); !strings.Contains(body, want) {
+			t.Errorf("%s lacks %s", path, want)
+		}
+	}
+}

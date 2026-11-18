@@ -40,7 +40,7 @@
 {{define "items-page"}}{{$feedPage := .Data.Feed}}{{$partial := .Partial}}{{range $i, $_ := .Data.Items}}
 <li class="item"{{if and $partial (eq $i 0)}} tabindex="-1" autofocus{{end}}>
   <h2>{{if .URL}}<a href="{{.URL}}">{{.Heading}}</a>{{else}}{{.Heading}}{{end}}</h2>
-  <p class="item-meta"><time datetime="{{.Posted.Format "2006-01-02T15:04:05Z"}}">{{.Posted.Format "2006-01-02 15:04"}} UTC</time>{{if not $feedPage}} · <a href="/feeds/{{.FeedID}}">{{.FeedName}}</a>{{end}}{{with .Domain}} · {{.}}{{end}}{{with .Author}} · by {{.}}{{end}}{{with .CommentsURL}} · <a href="{{.}}">discussion</a>{{end}}</p>
+  <p class="item-meta"><time datetime="{{.Posted.Format "2006-01-02T15:04:05Z"}}" title="{{.Posted.Format "2006-01-02 15:04"}} UTC">{{.PostedAgo}}</time>{{if not $feedPage}} · <a href="/feeds/{{.FeedID}}">{{.FeedName}}</a>{{end}}{{with .Domain}} · {{.}}{{end}}{{with .Author}} · by {{.}}{{end}}{{with .CommentsURL}} · <a href="{{.}}">discussion</a>{{end}}</p>
   {{if .ShowExcerpt}}<p class="excerpt">{{.Excerpt}}</p>{{end}}
 </li>
 {{end}}{{with .Data.Older}}

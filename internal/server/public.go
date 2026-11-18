@@ -55,6 +55,52 @@ type itemView struct {
 	// scry first saw it, or first-seen when the feed gave no date. Lists
 	// sort, window and page by it (posted_at in queries.sql).
 	Posted time.Time
+	// PostedAgo is Posted as relative text ("3h ago"), computed at render
+	// time. Pages are cached a minute at most, so minute precision holds;
+	// computing it server-side needs no script, which the CSP forbids inline.
+	PostedAgo string
+}
+
+// agoPrecision is the finest unit ago names. Items want minutes; the
+// catalog's last-post column wants days, where "3h ago" is noise.
+type agoPrecision int
+
+const (
+	toMinute agoPrecision = iota
+	toDay
+)
+
+// ago renders t relative to now, the one helper for every relative time
+// on the public pages. Past a week, a relative count stops being useful, so
+// it gives the date (with the year when it is not now's). Times in the
+// future (clock skew between feeds and us) read as the newest label, and
+// "yesterday" means 24-48 hours ago: the server does not know the reader's
+// time zone, so UTC calendar days would be wrong for many of them. Empty
+// for a zero time (a feed with no items).
+func ago(t, now time.Time, p agoPrecision) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := now.Sub(t)
+	switch {
+	case p == toDay && d < 24*time.Hour:
+		return "today"
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d/time.Minute))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d/time.Hour))
+	case d < 48*time.Hour:
+		return "yesterday"
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%d days ago", int(d/(24*time.Hour)))
+	}
+	t, now = t.UTC(), now.UTC()
+	if t.Year() != now.Year() {
+		return t.Format("Jan 2, 2006")
+	}
+	return t.Format("Jan 2")
 }
 
 // domain is the host a link leads to, without "www.". Computed at render
@@ -170,27 +216,6 @@ type feedView struct {
 	SiteHost, LastPostLabel string
 }
 
-// shortAgo renders a date for a table cell: relative while it is recent
-// ("3 days ago" reads faster than a date), "Nov 12" later, with the year
-// once it is not this year's. Empty for a feed with no items.
-func shortAgo(t, now time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	days := int(now.Sub(t).Hours() / 24)
-	switch {
-	case days < 0 || days == 0:
-		return "today"
-	case days == 1:
-		return "yesterday"
-	case days < 14:
-		return fmt.Sprintf("%d days ago", days)
-	case t.Year() == now.Year():
-		return t.Format("Jan 2")
-	}
-	return t.Format("Jan 2, 2006")
-}
-
 type itemsData struct {
 	Feed  *feedView // nil on the latest page
 	Items []itemView
@@ -289,12 +314,14 @@ func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "list latest items", err)
 		return
 	}
+	now := time.Now()
 	items := make([]itemView, len(rows))
 	for i, it := range rows {
+		posted := time.Unix(it.PostedAt, 0).UTC()
 		items[i] = itemView{
 			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
 			Domain: linkDomain(it.Url, it.FeedUrl), Author: it.Author, CommentsURL: it.CommentsUrl,
-			FeedName: feedName(it.FeedTitle, it.FeedUrl), Posted: time.Unix(it.PostedAt, 0).UTC(),
+			FeedName: feedName(it.FeedTitle, it.FeedUrl), Posted: posted, PostedAgo: ago(posted, now, toMinute),
 		}
 	}
 	d := itemsData{}
@@ -317,7 +344,7 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 			Paused: f.DisabledAt.Valid, RecentItems: f.RecentItems,
 			SiteHost: domain(f.SiteUrl), LastPost: lastPost(f.LastPostAt),
 		}
-		feeds[i].LastPostLabel = shortAgo(feeds[i].LastPost, now)
+		feeds[i].LastPostLabel = ago(feeds[i].LastPost, now, toDay)
 	}
 	setCache(w, r)
 	s.web.Render(w, r, web.View{Page: "catalog", Title: "Feeds", Data: feeds, Nav: "feeds"})
@@ -350,12 +377,14 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "list feed items", err)
 		return
 	}
+	now := time.Now()
 	items := make([]itemView, len(rows))
 	for i, it := range rows {
+		posted := time.Unix(it.PostedAt, 0).UTC()
 		items[i] = itemView{
 			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
 			Domain: linkDomain(it.Url, f.SiteUrl, f.Url), Author: it.Author, CommentsURL: it.CommentsUrl,
-			Posted: time.Unix(it.PostedAt, 0).UTC(),
+			Posted: posted, PostedAgo: ago(posted, now, toMinute),
 		}
 	}
 	fv := &feedView{ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl, Paused: f.DisabledAt.Valid}
