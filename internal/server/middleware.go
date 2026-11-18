@@ -130,13 +130,16 @@ type routeKey struct{}
 // recordRoute wraps the mux and hands the matched pattern back to
 // requestLogger. ServeMux sets r.Pattern on the request it is given, but any
 // middleware in between that calls r.WithContext (the auth middleware does)
-// passes the mux a copy, so the logger's own r never sees it.
+// passes the mux a copy, so the logger's own r never sees it. Deferred so a
+// panicking handler is still logged with its route.
 func recordRoute(mux http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if p, ok := r.Context().Value(routeKey{}).(*string); ok {
+				*p = r.Pattern
+			}
+		}()
 		mux.ServeHTTP(w, r)
-		if p, ok := r.Context().Value(routeKey{}).(*string); ok {
-			*p = r.Pattern
-		}
 	})
 }
 

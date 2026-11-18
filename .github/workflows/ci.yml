@@ -11,12 +11,26 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # go.mod replaces voodoo with ../voodoo, so both repos are checked out side
+    # by side (docs/design.md, Known issues).
+    defaults:
+      run:
+        working-directory: scry
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: scry
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: 0xD34DC0D3/voodoo
+          path: voodoo
+          persist-credentials: false
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: go.mod
+          go-version-file: scry/go.mod
+          cache-dependency-path: scry/go.sum
 
       - name: gofmt
         run: |
@@ -52,12 +66,6 @@ jobs:
       - name: govulncheck
         run: ./deploy/vulncheck.sh
 
-  # KNOWN ISSUE: this job cannot build yet. go.mod replaces voodoo with
-  # ../voodoo, which a scry-only checkout in CI does not have (docs/design.md,
-  # Known issues), so it fails at "Build release" on every push to main. Left
-  # in place for when voodoo tags a version. Until then deploy with
-  # `make deploy` from a machine that has both checkouts. (Note GitHub creates
-  # the "production" environment on first use if it does not exist.)
   deploy:
     needs: test
     # Dormant until DEPLOY_HOST is set (docs/deploy.md), so a fresh copy of the
@@ -68,14 +76,24 @@ jobs:
     concurrency:
       group: production
       cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: scry
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          path: scry
+          persist-credentials: false
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: 0xD34DC0D3/voodoo
+          path: voodoo
           persist-credentials: false
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: go.mod
+          go-version-file: scry/go.mod
           cache: false
 
       - name: Build release

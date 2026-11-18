@@ -131,11 +131,11 @@ restore the backup taken at the start of the deploy (newest file in
 
 ### Deploying from CI
 
-The `deploy` job in `.github/workflows/ci.yml` mirrors voodoo's but **cannot
-build yet**: `go.mod` replaces voodoo with `../voodoo`, which CI does not
-have (see Known issues in [design.md](design.md)). Until voodoo tags a
-version, use `make deploy`. For when it works, the one-time setup, after one
-`make deploy` so `scry-install` exists:
+The `deploy` job in `.github/workflows/ci.yml` mirrors voodoo's. Because
+`go.mod` replaces voodoo with `../voodoo`, CI checks out voodoo's `main` beside
+scry and builds against it (see Known issues in [design.md](design.md)).
+CI never uploads `install.sh`; changes to it reach the server only through
+`make deploy`. One-time setup, after one `make deploy` so `scry-install` exists:
 
 ```sh
 ssh-keygen -t ed25519 -N "" -C scry-ci -f ci_key

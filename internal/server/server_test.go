@@ -306,3 +306,17 @@ func TestLoggedRouteSurvivesAuth(t *testing.T) {
 		t.Errorf("unmatched route logged wrong: %s", out)
 	}
 }
+
+func TestPanicLoggedWithRoute(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /boom", func(http.ResponseWriter, *http.Request) { panic("boom") })
+	do(chain(recordRoute(mux), requestLogger, recoverer), httptest.NewRequest(http.MethodGet, "/boom", nil))
+	if out := buf.String(); !strings.Contains(out, `route="GET /boom"`) {
+		t.Errorf("panic logged without its route: %s", out)
+	}
+}

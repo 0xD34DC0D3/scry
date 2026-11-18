@@ -26,7 +26,7 @@ scry's first commit is the template: runnable, one example page, CI green, no fe
 - Inngest client, `/api/inngest`, `jobs/`.
   Inngest env vars keep the SDK's names (`INNGEST_*`), not `SCRY_`, since the SDK reads them itself; prod requires both keys and refuses `INNGEST_DEV`. `/api/inngest` skips CSRF and voodoo auth (signature-authenticated) and caps bodies at 36 MiB (Inngest's 32 MiB run-state limit plus headroom) instead of 64 KB.
 - Pinned tools, CI, govulncheck, `deploy.sh`, `backup.sh`, Caddyfile, systemd.
-  Deploy diverges from voodoo's in four ways: `install.sh` runs `scry doctor` (new binary, prod env) after `migrate up` and before installing it; the health check accepts any 2xx because scry's `/healthz` has an empty body; `ci-setup.sh` makes user `deploy-scry` (not `deploy`) so it does not overwrite voodoo's CI key on the shared droplet; the systemd unit leaves outbound HTTPS open (feeds, voodoo, Inngest Cloud). The CI deploy job stays dormant until the repository variable `DEPLOY_HOST` is set, and cannot build until the `../voodoo` replace goes (see Known issues).
+  Deploy diverges from voodoo's in four ways: `install.sh` runs `scry doctor` (new binary, prod env) after `migrate up` and before installing it; the health check accepts any 2xx because scry's `/healthz` has an empty body; `ci-setup.sh` makes user `deploy-scry` (not `deploy`) so it does not overwrite voodoo's CI key on the shared droplet; the systemd unit leaves outbound HTTPS open (feeds, voodoo, Inngest Cloud). The CI deploy job stays dormant until the repository variable `DEPLOY_HOST` is set. CI checks out voodoo's `main` beside scry for the `../voodoo` replace (see Known issues). `install.sh` reminds the operator to re-sync the Inngest app, which is manual.
 - `AGENTS.md`, `docs/design.md`, `docs/initial_milestone.md`.
 
 CI also checks: sqlc output is current, `queries.sql` is ASCII-only (see voodoo `sqlc.yaml`), migrations run up, down, up.
@@ -74,6 +74,8 @@ Out: Antfly, MCP, GraphQL, anything app-specific.
 - scry uses stdlib `net/http`; voodoo uses echo. Code copied from voodoo's server needs porting, not pasting.
 - scry's admin is voodoo's `is_admin`, though voodoo's README says `is_admin` is not an app role. Fine while one person runs everything; per-app roles would need a table.
 - Copies made from the template drift apart.
-- `go.mod` replaces voodoo with `../voodoo` until voodoo tags a version, so a scry-only checkout (CI) cannot build.
+- `go.mod` replaces voodoo with `../voodoo` until voodoo tags a version: builds use whatever voodoo is checked out (CI: voodoo's `main`), so a scry build is not pinned to a voodoo commit.
+- `voodooauth` calls voodoo's `/me` once per request carrying an unknown or garbage credential (only positive answers are cached; no format check or request coalescing). One call per request, not amplification; revisit if voodoo sees abuse.
+- `backup.sh` does not read `/etc/scry/scry.env`. If `SCRY_DB_PATH` there differs from the default, backups print "nothing to back up" and exit 0 without the healthcheck ping (same as voodoo). Keep the default path.
 - Images load directly from other sites, which see readers' IP addresses.
 - Feeds whose guids change on every fetch produce duplicates.

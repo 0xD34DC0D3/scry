@@ -71,6 +71,8 @@ echo ">> health check $url"
 for _ in $(seq 10); do
 	if curl -fsS -m 3 -o /dev/null "$url" 2>/dev/null; then
 		echo ">> healthy"
+		echo ">> If this deploy added or changed Inngest functions, re-sync the app"
+		echo ">> in the Inngest dashboard (docs/deploy.md); until then they do not run."
 		exit 0
 	fi
 	sleep 1
