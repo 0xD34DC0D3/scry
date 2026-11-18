@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,5 +30,45 @@ func TestRenderErrorIsCleanly500(t *testing.T) {
 	}
 	if rec.Header().Get("Vary") != "HX-Request" {
 		t.Errorf("Vary = %q", rec.Header().Get("Vary"))
+	}
+}
+
+func TestAccountChip(t *testing.T) {
+	for _, tc := range []struct {
+		name, email string
+		want        []string
+	}{
+		{"ascii", "linell@example.com", []string{`title="linell@example.com"`, `aria-hidden="true">l</span>`, `Signed in as linell@example.com`}},
+		{"multibyte", "\u00e9mile@example.com", []string{`aria-hidden="true">é</span>`}},
+		{"escaped", `a"<b>@example.com`, []string{`title="a&#34;&lt;b&gt;@example.com"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "u1", "email": tc.email, "timezone": "UTC"})
+			}))
+			defer vd.Close()
+			auth := voodooauth.New(vd.URL)
+			pages := fstest.MapFS{"p.html": {Data: []byte(`{{define "p"}}{{template "top" .}}{{template "bottom" .}}{{end}}`)}}
+			r := New("app", "https://site.example", pages, auth)
+			h := auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				r.Render(w, req, View{Page: "p"})
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.AddCookie(&http.Cookie{Name: voodooauth.CookieName, Value: "x"})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			body := rec.Body.String()
+			for _, w := range tc.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("missing %q in %s", w, body)
+				}
+			}
+			if strings.Contains(body, "<span>"+tc.email) {
+				t.Errorf("bare email still printed in header")
+			}
+			if !strings.Contains(body, "sign out") {
+				t.Errorf("sign out button missing")
+			}
+		})
 	}
 }

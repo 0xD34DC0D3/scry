@@ -258,11 +258,30 @@ header nav a[aria-current] {
   margin: 0;
 }
 
-/* a long email must never blow out the header bar on narrow screens */
-.who span {
-  max-width: 42vw;
+/* the signed-in user is a small tile with the email's first letter; the full
+   address is the title and screen-reader text, so it can never crowd the bar */
+.who .chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: none;
+  background: var(--accent);
+  color: var(--ink);
+  border: var(--b) solid var(--ink);
+  border-radius: var(--radius-brut);
+  font: 700 0.875rem var(--mono);
+  text-transform: uppercase;
+  cursor: default;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 

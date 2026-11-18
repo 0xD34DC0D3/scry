@@ -32,7 +32,7 @@
     </nav>
     <div class="who">
       {{- with .User}}
-      <span>{{.Email}}</span>
+      <span class="chip" title="{{.Email}}"><span aria-hidden="true">{{printf "%.1s" .Email}}</span><span class="sr-only">Signed in as {{.Email}}</span></span>
       {{- /* Posts straight to voodoo, which accepts logout from sibling hosts
              and ends the session for every app. */}}
       <form method="post" action="{{$.LogoutURL}}">
