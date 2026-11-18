@@ -45,11 +45,11 @@ func (d Deps) registerSyncFeed(c inngestgo.Client) error {
 			ID: "sync-feed", Name: "Sync feed",
 			// One sync per feed at a time, so the cron and "sync now"
 			// never fetch the same feed at once (extra runs queue), and
-			// about 10 overall. The function is one step, so step-level
-			// limits cover the whole run.
+			// 5 overall (the Inngest plan's limit; design.md said about 10).
+			// The function is one step, so step-level limits cover the whole run.
 			Concurrency: &inngestgo.ConfigConcurrency{Step: []inngestgo.ConfigStepConcurrency{
 				{Limit: 1, Key: inngestgo.StrPtr("event.data.feed_id")},
-				{Limit: 10},
+				{Limit: 5},
 			}},
 		},
 		inngestgo.EventTrigger(SyncFeedEvent, nil),

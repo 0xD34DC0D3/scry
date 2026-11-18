@@ -14,7 +14,7 @@ import (
 
 // Every 10 minutes, at most 100 feeds. A feed is synced at most 10 min
 // late, which is fine for hourly feeds, and an idle tick is one cheap step.
-// 100 syncs drain in under 3 min at 10 concurrent 15 s fetches, well
+// 100 syncs drain in at most 5 min at 5 concurrent 15 s fetches, still
 // inside a tick; more than 100 due wait for the next tick, oldest first.
 // The claim is one UPDATE and the send one API call, each far inside
 // serve's 30 s write timeout, and the claim's output (100 ids) stays small.
