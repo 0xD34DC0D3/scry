@@ -5,10 +5,11 @@ pages. Sign-in is delegated to [voodoo](https://github.com/0xD34DC0D3/voodoo).
 It is also the source of the org's Go app template.
 
 Status: early. Admins manage the feed catalog at `/admin/feeds`; feeds are
-fetched on a schedule. Anyone can read the latest items at `/`, the catalog
-at `/feeds` and one feed at `/feeds/{id}` (excerpts, linking out).
-Signed-in users subscribe to feeds and read full items, with unread
-tracking, at `/reading`.
+fetched on a schedule. Anyone can read the latest items at `/` (and
+`/everything`), the catalog at `/feeds` and one feed at `/feeds/{id}`
+(excerpts, linking out). Signed-in users subscribe to feeds and read full
+items, with unread tracking: `/` becomes their Unread list, `/following`
+everything from their feeds, and a subscribed feed's page its own reader.
 The plan is in [docs/initial_milestone.md](docs/initial_milestone.md) and the
 spec in [docs/design.md](docs/design.md).
 

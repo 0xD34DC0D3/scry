@@ -54,7 +54,7 @@ var (
 	uptoRe  = regexp.MustCompile(`name="upto" value="(\d+)"`)
 )
 
-// readingState fetches /reading (all view, so read items are listed too)
+// readingState fetches the reading page at path
 // and returns the page, its total unread count and its upto watermark.
 func readingState(t *testing.T, h http.Handler, path string) (body string, total int, upto string) {
 	t.Helper()
@@ -84,7 +84,7 @@ func feedCount(body string, feedID int64) string {
 
 func wantCounts(t *testing.T, h http.Handler, total int, perFeed map[int64]string) {
 	t.Helper()
-	body, got, _ := readingState(t, h, readingPath)
+	body, got, _ := readingState(t, h, homePath)
 	if got != total {
 		t.Errorf("unread total = %d, want %d", got, total)
 	}
@@ -129,7 +129,7 @@ func TestReadingDone(t *testing.T) {
 	wantCounts(t, h, 3, map[int64]string{a.ID: "2", b.ID: "1"})
 
 	// Read a1 with htmx: the entry comes back read, counts out of band.
-	rec := do(h, postForm(fmt.Sprintf("/reading/items/%d/read", ia["a1"]), url.Values{"back": {"/reading"}}, "user", hx))
+	rec := do(h, postForm(fmt.Sprintf("/items/%d/read", ia["a1"]), url.Values{"back": {"/"}}, "user", hx))
 	frag := rec.Body.String()
 	if rec.Code != http.StatusOK || strings.Contains(frag, "<html") ||
 		!strings.Contains(frag, `class="entry read"`) || !strings.Contains(frag, "Mark unread") ||
@@ -138,20 +138,20 @@ func TestReadingDone(t *testing.T) {
 		t.Fatalf("htmx mark read: %d %s", rec.Code, frag)
 	}
 	// Read b1 with a plain form: 303 back to the list.
-	res := post(t, h, fmt.Sprintf("/reading/items/%d/read", ib["b1"]), url.Values{"back": {"/reading#item-5"}}, nil)
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/reading#item-5" {
+	res := post(t, h, fmt.Sprintf("/items/%d/read", ib["b1"]), url.Values{"back": {"/#item-5"}}, nil)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/#item-5" {
 		t.Fatalf("plain mark read: %d %q", res.StatusCode, res.Header.Get("Location"))
 	}
 	wantCounts(t, h, 1, map[int64]string{a.ID: "1", b.ID: ""})
 
 	// The page is rendered; then sync 2 lands before "mark all read" is
 	// clicked. What arrived after the render must stay unread.
-	_, _, upto := readingState(t, h, readingPath)
+	_, _, upto := readingState(t, h, homePath)
 	t2 := t1 + 600
 	syncItems(t, d, a.ID, t2, "a0", "a1", "a2", "a3")
 	syncItems(t, d, b.ID, t2, "b1", "b2")
-	res = post(t, h, "/reading/mark-all-read", url.Values{"upto": {upto}}, nil)
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != readingPath {
+	res = post(t, h, "/mark-all-read", url.Values{"upto": {upto}}, nil)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != homePath {
 		t.Fatalf("mark all read: %d %q", res.StatusCode, res.Header.Get("Location"))
 	}
 	wantCounts(t, h, 2, map[int64]string{a.ID: "1", b.ID: "1"})
@@ -163,18 +163,18 @@ func TestReadingDone(t *testing.T) {
 	wantCounts(t, h, 3, map[int64]string{a.ID: "2", b.ID: "1"})
 
 	// Mark all read for one feed only, with htmx: the panel comes back.
-	_, _, upto = readingState(t, h, readingPath)
-	rec = do(h, postForm("/reading/mark-all-read", url.Values{"upto": {upto}, "feed": {strconv.FormatInt(b.ID, 10)}}, "user", hx))
+	_, _, upto = readingState(t, h, homePath)
+	rec = do(h, postForm("/mark-all-read", url.Values{"upto": {upto}, "feed": {strconv.FormatInt(b.ID, 10)}}, "user", hx))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `<div id="reading-panel">`) || strings.Contains(rec.Body.String(), "<html") {
 		t.Fatalf("htmx mark all read: %d %s", rec.Code, rec.Body)
 	}
 	wantCounts(t, h, 2, map[int64]string{a.ID: "2", b.ID: ""})
 
 	// And everything.
-	_, _, upto = readingState(t, h, readingPath)
-	post(t, h, "/reading/mark-all-read", url.Values{"upto": {upto}}, nil)
+	_, _, upto = readingState(t, h, homePath)
+	post(t, h, "/mark-all-read", url.Values{"upto": {upto}}, nil)
 	wantCounts(t, h, 0, map[int64]string{a.ID: "", b.ID: ""})
-	if body, _, _ := readingState(t, h, readingPath); !strings.Contains(body, "All caught up") {
+	if body, _, _ := readingState(t, h, homePath); !strings.Contains(body, "All caught up") {
 		t.Errorf("no caught-up state: %s", body)
 	}
 }
@@ -186,11 +186,11 @@ func TestMarkAllReadNeverBackwards(t *testing.T) {
 	post(t, h, fmt.Sprintf("/feeds/%d/subscribe", a.ID), nil, nil)
 	t1 := time.Now().Unix() + 10
 	syncItems(t, d, a.ID, t1, "a1")
-	_, _, early := readingState(t, h, readingPath)
+	_, _, early := readingState(t, h, homePath)
 	syncItems(t, d, a.ID, t1+10, "a2")
-	_, _, late := readingState(t, h, readingPath)
-	post(t, h, "/reading/mark-all-read", url.Values{"upto": {late}}, nil)
-	post(t, h, "/reading/mark-all-read", url.Values{"upto": {early}}, nil)
+	_, _, late := readingState(t, h, homePath)
+	post(t, h, "/mark-all-read", url.Values{"upto": {late}}, nil)
+	post(t, h, "/mark-all-read", url.Values{"upto": {early}}, nil)
 	wantCounts(t, h, 0, nil)
 }
 
@@ -199,26 +199,28 @@ func TestReadingUnreadView(t *testing.T) {
 	a := seedFeed(t, d, "https://a.example/feed")
 	post(t, h, fmt.Sprintf("/feeds/%d/subscribe", a.ID), nil, nil)
 	ids := syncItems(t, d, a.ID, time.Now().Unix()+10, "a1", "a2")
-	post(t, h, fmt.Sprintf("/reading/items/%d/read", ids["a1"]), nil, nil)
+	post(t, h, fmt.Sprintf("/items/%d/read", ids["a1"]), nil, nil)
 
-	unread := do(h, get(readingPath, "user", nil)).Body.String()
+	unread := do(h, get(homePath, "user", nil)).Body.String()
 	if strings.Contains(unread, "Post a1") || !strings.Contains(unread, "Post a2") || !strings.Contains(unread, "<p>Body of a2</p>") {
 		t.Errorf("unread view: %s", unread)
 	}
-	all := do(h, get(readingPath+"?view=all", "user", nil)).Body.String()
+	all := do(h, get(followingPath, "user", nil)).Body.String()
 	if !strings.Contains(all, "Post a1") || !strings.Contains(all, "Post a2") || !strings.Contains(all, "Show post") {
 		t.Errorf("all view: %s", all)
 	}
 
 	// Mark unread brings it back.
-	res := post(t, h, fmt.Sprintf("/reading/items/%d/unread", ids["a1"]), url.Values{"back": {"/reading?view=all"}}, nil)
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/reading?view=all" {
+	res := post(t, h, fmt.Sprintf("/items/%d/unread", ids["a1"]), url.Values{"back": {"/following"}}, nil)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/following" {
 		t.Fatalf("mark unread: %d %q", res.StatusCode, res.Header.Get("Location"))
 	}
 	wantCounts(t, h, 2, nil)
 }
 
-func TestReadingFeedFilter(t *testing.T) {
+// A subscribed feed's page is the reader scoped to that feed; anyone else
+// gets its excerpts.
+func TestReadingFeedPage(t *testing.T) {
 	h, d := newTestServer(t, nil)
 	a := seedFeed(t, d, "https://a.example/feed")
 	b := seedFeed(t, d, "https://b.example/feed")
@@ -229,22 +231,126 @@ func TestReadingFeedFilter(t *testing.T) {
 	now := time.Now().Unix() + 10
 	syncItems(t, d, a.ID, now, "a1")
 	syncItems(t, d, b.ID, now, "b1")
+	syncItems(t, d, other.ID, now, "c1")
 
-	body := do(h, get(fmt.Sprintf("/reading?feed=%d", a.ID), "user", nil)).Body.String()
-	if !strings.Contains(body, "Post a1") || strings.Contains(body, "Post b1") {
-		t.Errorf("filtered list: %s", body)
+	feedA := fmt.Sprintf("/feeds/%d", a.ID)
+	body := do(h, get(feedA, "user", nil)).Body.String()
+	for _, w := range []string{
+		"Post a1", "<p>Body of a1</p>", `<div id="reading-panel">`,
+		fmt.Sprintf(`name="feed" value="%d"`, a.ID), // mark-all and item forms carry the scope
+		`<a href="/feeds">← Feeds</a>`, `readonly value="https://a.example/feed"`,
+		fmt.Sprintf(`action="/feeds/%d/unsubscribe">`, a.ID), // a plain post: the page changes mode
+		`<a href="` + feedA + `" aria-current="page">Unread <span id="unread-total" class="n">1</span></a>`,
+		`<a href="` + feedA + `?view=all">All</a>`,
+		`<a href="/feeds" aria-current="true">feeds</a>`,
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("subscribed feed page lacks %q", w)
+		}
 	}
-	if !strings.Contains(body, fmt.Sprintf(`name="feed" value="%d"`, a.ID)) {
-		t.Errorf("mark-all form lacks the feed: %s", body)
+	for _, n := range []string{"Post b1", "read →", "feed page", "All feeds", "/reading", "subscribed ·", "Following"} {
+		if strings.Contains(body, n) {
+			t.Errorf("subscribed feed page has %q", n)
+		}
 	}
-	// Not subscribed: back to every feed.
-	rec := do(h, get(fmt.Sprintf("/reading?feed=%d&view=all", other.ID), "user", nil))
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/reading?view=all" {
-		t.Errorf("unsubscribed filter: %d %q", rec.Code, rec.Header().Get("Location"))
+	// Not subscribed: excerpts and a Subscribe button, no reader.
+	rec := do(h, get(fmt.Sprintf("/feeds/%d?view=all", other.ID), "user", nil))
+	body = rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "Post c1") || strings.Contains(body, "<p>Body of c1</p>") ||
+		strings.Contains(body, "reading-panel") || !strings.Contains(body, fmt.Sprintf(`action="/feeds/%d/subscribe">`, other.ID)) {
+		t.Errorf("unsubscribed feed page: %d %s", rec.Code, body)
 	}
-	for _, p := range []string{"/reading?feed=x", "/reading?feed=-1", "/reading?before=nope"} {
+	for _, p := range []string{"/feeds/x", "/feeds/-1", "/feeds/99999"} {
+		if rec := do(h, get(p, "user", nil)); rec.Code != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404", p, rec.Code)
+		}
+	}
+	for _, p := range []string{"/?before=nope", "/following?before=nope", feedA + "?before=nope", feedA + "?view=all&before=1-"} {
 		if rec := do(h, get(p, "user", nil)); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s = %d, want 400", p, rec.Code)
+		}
+	}
+}
+
+// The home stream: one switch narrows it, the unread count in its label;
+// the chips link to each feed's page.
+func TestHomeStream(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	a := seedFeed(t, d, "https://a.example/feed")
+	b := seedFeed(t, d, "https://b.example/feed")
+	if _, err := d.Writer.Exec(`UPDATE feeds SET title = 'Alpha' WHERE id = ?`, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	post(t, h, fmt.Sprintf("/feeds/%d/subscribe", a.ID), nil, nil)
+	now := time.Now().Unix() + 10
+	ia := syncItems(t, d, a.ID, now, "a1", "a2")
+	syncItems(t, d, b.ID, now, "b1")
+	post(t, h, fmt.Sprintf("/items/%d/read", ia["a1"]), nil, nil)
+
+	seg := func(href, label string, current bool) string {
+		c := ""
+		if current {
+			c = ` aria-current="page"`
+		}
+		return `<a href="` + href + `"` + c + `>` + label
+	}
+	unread := `Unread <span id="unread-total" class="n">1</span></a>`
+	chip := fmt.Sprintf(`<a href="/feeds/%d"><span class="name">Alpha</span>`, a.ID)
+	tests := []struct {
+		path      string
+		want, not []string
+	}{
+		{"/", []string{seg("/", unread, true), seg("/following", "Following", false), seg("/everything", "Everything", false),
+			chip, "Post a2", "<p>Body of a2</p>", `<h1 class="vh">Unread</h1>`, `<a class="app" href="/" aria-current="page">scry</a>`},
+			[]string{"Post a1", "Post b1", "All feeds", "Sign in"}},
+		{"/following", []string{seg("/", unread, false), seg("/following", "Following", true), "Post a1", "Post a2",
+			fmt.Sprintf(`<a href="/feeds/%d?view=all"><span class="name">Alpha</span>`, a.ID), `<a class="app" href="/" aria-current="true">scry</a>`},
+			[]string{"Post b1"}},
+		{"/everything", []string{seg("/", unread, false), seg("/everything", "Everything", true), "Post a1", "Post b1", "Body of b1", `<ol class="items">`},
+			[]string{"<p>Body of", "Mark all read", "subscribed to any", "Sign in"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.path, func(t *testing.T) {
+			rec := do(h, get(tc.path, "user", nil))
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d", rec.Code)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("missing %q", w)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(body, n) {
+					t.Errorf("unexpected %q", n)
+				}
+			}
+			for _, n := range []string{`href="/reading`, ">reading</a>", ">latest</a>"} {
+				if strings.Contains(body, n) {
+					t.Errorf("unexpected %q", n)
+				}
+			}
+		})
+	}
+	// Signed out, / is Everything: no switch, the sign-in note.
+	body := do(h, get("/", "", nil)).Body.String()
+	if strings.Contains(body, `class="seg"`) || !strings.Contains(body, "to subscribe and read full posts") || !strings.Contains(body, "Post b1") || !strings.Contains(body, "<h1>Latest</h1>") {
+		t.Errorf("signed-out home: %s", body)
+	}
+}
+
+// The removed /reading routes are gone, not redirected.
+func TestReadingRoutesGone(t *testing.T) {
+	h, _ := newTestServer(t, nil)
+	for _, p := range []string{"/reading", "/reading?view=all"} {
+		if rec := do(h, get(p, "user", nil)); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", p, rec.Code)
+		}
+	}
+	for _, p := range []string{"/reading/mark-all-read", "/reading/items/1/read"} {
+		if rec := do(h, postForm(p, url.Values{"upto": {"1"}}, "user", nil)); rec.Code != http.StatusNotFound {
+			t.Errorf("POST %s = %d, want 404", p, rec.Code)
 		}
 	}
 }
@@ -253,12 +359,12 @@ func TestReadingAuth(t *testing.T) {
 	h, d := newTestServer(t, nil)
 	a := seedFeed(t, d, "https://a.example/feed")
 	// A browser page load goes to sign in; anything else is 401.
-	if rec := do(h, get(readingPath, "", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"})); rec.Code != http.StatusFound {
+	if rec := do(h, get(followingPath, "", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"})); rec.Code != http.StatusFound {
 		t.Errorf("anonymous page load = %d, want 302", rec.Code)
 	}
 	for _, p := range []string{
 		fmt.Sprintf("/feeds/%d/subscribe", a.ID), fmt.Sprintf("/feeds/%d/unsubscribe", a.ID),
-		"/reading/mark-all-read", "/reading/items/1/read", "/reading/items/1/unread",
+		"/mark-all-read", "/items/1/read", "/items/1/unread",
 	} {
 		if rec := do(h, postForm(p, nil, "", nil)); rec.Code != http.StatusUnauthorized {
 			t.Errorf("anonymous POST %s = %d, want 401", p, rec.Code)
@@ -280,10 +386,10 @@ func TestReadingErrors(t *testing.T) {
 	}{
 		{"subscribe unknown feed", "/feeds/99999/subscribe", nil, http.StatusNotFound},
 		{"subscribe bad id", "/feeds/x/subscribe", nil, http.StatusNotFound},
-		{"read unknown item", "/reading/items/99999/read", nil, http.StatusNotFound},
-		{"read item of unsubscribed feed", fmt.Sprintf("/reading/items/%d/read", ib["b1"]), nil, http.StatusNotFound},
-		{"mark all without upto", "/reading/mark-all-read", nil, http.StatusBadRequest},
-		{"mark all bad feed", "/reading/mark-all-read", url.Values{"upto": {"1"}, "feed": {"x"}}, http.StatusBadRequest},
+		{"read unknown item", "/items/99999/read", nil, http.StatusNotFound},
+		{"read item of unsubscribed feed", fmt.Sprintf("/items/%d/read", ib["b1"]), nil, http.StatusNotFound},
+		{"mark all without upto", "/mark-all-read", nil, http.StatusBadRequest},
+		{"mark all bad feed", "/mark-all-read", url.Values{"upto": {"1"}, "feed": {"x"}}, http.StatusBadRequest},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -306,14 +412,15 @@ func TestReadingErrors(t *testing.T) {
 // back must stay on this site.
 func TestLocalBack(t *testing.T) {
 	tests := map[string]string{
-		"/reading?view=all#item-3": "/reading?view=all#item-3",
-		"/feeds":                   "/feeds",
-		"":                         "/def",
-		"//evil.example/x":         "/def",
-		"/\\evil.example":          "/def",
-		"https://evil.example/":    "/def",
-		"reading":                  "/def",
-		"/a\r\nLocation: x":        "/def",
+		"/feeds/3?view=all&before=1-2#item-3": "/feeds/3?view=all&before=1-2#item-3",
+		"/#item-3":                            "/#item-3",
+		"/feeds":                              "/feeds",
+		"":                                    "/def",
+		"//evil.example/x":                    "/def",
+		"/\\evil.example":                     "/def",
+		"https://evil.example/":               "/def",
+		"following":                           "/def",
+		"/a\r\nLocation: x":                   "/def",
 	}
 	for in, want := range tests {
 		r := postForm("/x", url.Values{"back": {in}}, "", nil)
@@ -337,10 +444,11 @@ func TestSubscribeControls(t *testing.T) {
 			t.Errorf("signed out %s: %s", p, body)
 		}
 	}
-	// Signed in: a Subscribe button on both, and the nav links to reading.
-	for _, p := range []string{"/feeds", feedPage} {
+	// Signed in: a Subscribe button on both; htmx in the catalog, a plain
+	// post on the feed's page (subscribing turns it into the reader).
+	for p, htmx := range map[string]bool{"/feeds": true, feedPage: false} {
 		body := do(h, get(p, "user", nil)).Body.String()
-		if !strings.Contains(body, sub) || !strings.Contains(body, `href="/reading"`) {
+		if !strings.Contains(body, sub) || strings.Contains(body, fmt.Sprintf(`hx-post="/feeds/%d/subscribe"`, a.ID)) != htmx {
 			t.Errorf("signed in %s: %s", p, body)
 		}
 	}
@@ -368,26 +476,35 @@ func TestSubscribeControls(t *testing.T) {
 func TestReadingHeaders(t *testing.T) {
 	h, d := newTestServer(t, nil)
 	a := seedFeed(t, d, "https://a.example/feed")
+	b := seedFeed(t, d, "https://b.example/feed")
 	post(t, h, fmt.Sprintf("/feeds/%d/subscribe", a.ID), nil, nil)
-	for _, hdr := range []map[string]string{nil, hx} {
-		rec := do(h, get(readingPath, "user", hdr))
-		if cc := rec.Header().Get("Cache-Control"); cc != privateCache {
-			t.Errorf("Cache-Control = %q", cc)
-		}
-		vary := strings.Join(rec.Header().Values("Vary"), ",")
-		for _, v := range []string{"HX-Request", "Cookie", "Authorization"} {
-			if !strings.Contains(vary, v) {
-				t.Errorf("Vary = %q, lacks %s", vary, v)
+	feedA, feedB := fmt.Sprintf("/feeds/%d", a.ID), fmt.Sprintf("/feeds/%d", b.ID)
+	// The personal views: never stored, and article images allowed.
+	for _, p := range []string{homePath, followingPath, feedA, feedA + "?view=all"} {
+		for _, hdr := range []map[string]string{nil, hx} {
+			rec := do(h, get(p, "user", hdr))
+			if cc := rec.Header().Get("Cache-Control"); cc != privateCache {
+				t.Errorf("%s Cache-Control = %q", p, cc)
+			}
+			vary := strings.Join(rec.Header().Values("Vary"), ",")
+			for _, v := range []string{"HX-Request", "Cookie", "Authorization"} {
+				if !strings.Contains(vary, v) {
+					t.Errorf("%s Vary = %q, lacks %s", p, vary, v)
+				}
+			}
+			csp := rec.Header().Get("Content-Security-Policy")
+			if !strings.Contains(csp, "img-src 'self' https:") || !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe-inline") {
+				t.Errorf("%s reading CSP = %q", p, csp)
 			}
 		}
-		csp := rec.Header().Get("Content-Security-Policy")
-		if !strings.Contains(csp, "img-src 'self' https:") || !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "unsafe-inline") {
-			t.Errorf("reading CSP = %q", csp)
-		}
 	}
-	// Other pages keep images to 'self'.
-	if csp := do(h, get("/", "user", nil)).Header().Get("Content-Security-Policy"); strings.Contains(csp, "img-src") {
-		t.Errorf("public CSP widened: %q", csp)
+	// Excerpt pages keep images to 'self', signed in or not.
+	for _, c := range []struct{ path, cookie string }{
+		{everythingPath, "user"}, {"/feeds", "user"}, {feedB, "user"}, {homePath, ""}, {feedA, ""},
+	} {
+		if csp := do(h, get(c.path, c.cookie, nil)).Header().Get("Content-Security-Policy"); strings.Contains(csp, "img-src") {
+			t.Errorf("%s (%q) CSP widened: %q", c.path, c.cookie, csp)
+		}
 	}
 }
 
@@ -412,7 +529,7 @@ func TestReadingContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := do(h, get(readingPath, "user", nil)).Body.String()
+	body := do(h, get(homePath, "user", nil)).Body.String()
 	for _, want := range []string{
 		`<div class="prose"><p>Kept <em>markup</em></p></div>`,
 		`&lt;script&gt;x&lt;/script&gt;`,
@@ -428,9 +545,13 @@ func TestReadingContent(t *testing.T) {
 	if strings.Contains(body, "<script>x") {
 		t.Error("title not escaped")
 	}
-	// Full HTML stays off the public pages.
-	if pub := do(h, get("/", "", nil)).Body.String(); strings.Contains(pub, "<em>markup</em>") {
-		t.Error("public page shows full HTML")
+	// Full HTML stays off the excerpt pages, for anyone.
+	for _, c := range []struct{ path, cookie string }{
+		{"/", ""}, {everythingPath, ""}, {everythingPath, "user"}, {fmt.Sprintf("/feeds/%d", a.ID), ""},
+	} {
+		if pub := do(h, get(c.path, c.cookie, nil)).Body.String(); strings.Contains(pub, "<em>markup</em>") {
+			t.Errorf("%s (%q) shows full HTML", c.path, c.cookie)
+		}
 	}
 }
 
@@ -445,56 +566,81 @@ func TestReadingPaging(t *testing.T) {
 	}
 	syncItems(t, d, a.ID, now, keys...) // one first_seen_at for all: ties broken by id
 
-	seen := map[string]bool{}
-	path := fmt.Sprintf("/reading?feed=%d&view=all", a.ID)
-	body := do(h, get(path, "user", nil)).Body.String()
-	m := olderRe.FindStringSubmatch(body)
-	if m == nil {
-		t.Fatalf("no Older link: %s", body)
-	}
-	older := strings.ReplaceAll(m[1], "&amp;", "&")
-	if !strings.Contains(older, fmt.Sprintf("feed=%d", a.ID)) || !strings.Contains(older, "view=all") {
-		t.Errorf("Older link drops the filter: %s", older)
-	}
-	for _, k := range keys {
-		if strings.Contains(body, "Post "+k+"<") {
-			seen[k] = true
-		}
-	}
-	frag := do(h, get(older, "user", hx)).Body.String()
-	if strings.Contains(frag, "<html") || !strings.Contains(frag, "autofocus") || !strings.Contains(frag, "end of 30 days") {
-		t.Errorf("Older fragment: %s", frag)
-	}
-	if strings.Count(frag, "autofocus") != 1 {
-		t.Errorf("autofocus count = %d", strings.Count(frag, "autofocus"))
-	}
-	for _, k := range keys {
-		if strings.Contains(frag, "Post "+k+"<") {
-			if seen[k] {
-				t.Errorf("%s on both pages", k)
+	feedA := fmt.Sprintf("/feeds/%d", a.ID)
+	// Every view pages by its own cursor, keeping its scope in the link.
+	for _, path := range []string{homePath, followingPath, feedA, feedA + "?view=all"} {
+		t.Run(path, func(t *testing.T) {
+			seen := map[string]bool{}
+			body := do(h, get(path, "user", nil)).Body.String()
+			m := olderRe.FindStringSubmatch(body)
+			if m == nil {
+				t.Fatalf("no Older link: %s", body)
 			}
-			seen[k] = true
-		}
-	}
-	if len(seen) != len(keys) {
-		t.Errorf("saw %d of %d items", len(seen), len(keys))
-	}
-	if full := do(h, get(path, "user", nil)).Body.String(); strings.Contains(full, "autofocus") {
-		t.Error("full page autofocuses")
+			older := strings.ReplaceAll(m[1], "&amp;", "&")
+			sep := "?"
+			if strings.Contains(path, "?") {
+				sep = "&"
+			}
+			if !strings.HasPrefix(older, path+sep+"before=") {
+				t.Errorf("Older link drops the scope: %s", older)
+			}
+			for _, k := range keys {
+				if strings.Contains(body, "Post "+k+"<") {
+					seen[k] = true
+				}
+			}
+			frag := do(h, get(older, "user", hx)).Body.String()
+			if strings.Contains(frag, "<html") || !strings.Contains(frag, "autofocus") || !strings.Contains(frag, "end of 30 days") {
+				t.Errorf("Older fragment: %s", frag)
+			}
+			if strings.Count(frag, "autofocus") != 1 {
+				t.Errorf("autofocus count = %d", strings.Count(frag, "autofocus"))
+			}
+			for _, k := range keys {
+				if strings.Contains(frag, "Post "+k+"<") {
+					if seen[k] {
+						t.Errorf("%s on both pages", k)
+					}
+					seen[k] = true
+				}
+			}
+			if len(seen) != len(keys) {
+				t.Errorf("saw %d of %d items", len(seen), len(keys))
+			}
+			if full := do(h, get(path, "user", nil)).Body.String(); strings.Contains(full, "autofocus") {
+				t.Error("full page autofocuses")
+			}
+		})
 	}
 }
 
 func TestReadingEmptyStates(t *testing.T) {
 	h, d := newTestServer(t, nil)
-	if body := do(h, get(readingPath, "user", nil)).Body.String(); !strings.Contains(body, "subscribed to any feeds yet") || !strings.Contains(body, `href="/feeds"`) {
-		t.Errorf("no subscriptions: %s", body)
-	}
 	a := seedFeed(t, d, "https://a.example/feed")
+	b := seedFeed(t, d, "https://b.example/feed")
+	syncItems(t, d, b.ID, time.Now().Unix(), "b1")
+	// No subscriptions: / is Everything with a nudge, and no switch.
+	for _, p := range []string{homePath, everythingPath} {
+		rec := do(h, get(p, "user", nil))
+		body := rec.Body.String()
+		if !strings.Contains(body, "subscribed to any feeds yet") || !strings.Contains(body, `<a href="/feeds">Browse the feeds</a>`) ||
+			!strings.Contains(body, "Post b1") || strings.Contains(body, `class="seg"`) || strings.Contains(body, "Sign in") ||
+			rec.Header().Get("Cache-Control") != privateCache {
+			t.Errorf("%s with no subscriptions: %s", p, body)
+		}
+	}
+	if body := do(h, get(followingPath, "user", nil)).Body.String(); !strings.Contains(body, "subscribed to any feeds yet") || strings.Contains(body, `class="seg"`) {
+		t.Errorf("following with no subscriptions: %s", body)
+	}
 	post(t, h, fmt.Sprintf("/feeds/%d/subscribe", a.ID), nil, nil)
-	if body := do(h, get(readingPath, "user", nil)).Body.String(); !strings.Contains(body, "All caught up") || !strings.Contains(body, `href="/reading?view=all"`) {
+	if body := do(h, get(homePath, "user", nil)).Body.String(); !strings.Contains(body, "All caught up") || !strings.Contains(body, `href="/following">See every post from your feeds`) {
 		t.Errorf("caught up: %s", body)
 	}
-	if body := do(h, get(readingPath+"?view=all", "user", nil)).Body.String(); !strings.Contains(body, "Nothing from your feeds in the last 30 days") {
+	feedA := fmt.Sprintf("/feeds/%d", a.ID)
+	if body := do(h, get(feedA, "user", nil)).Body.String(); !strings.Contains(body, "All caught up") || !strings.Contains(body, `href="`+feedA+`?view=all">See every post from this feed`) {
+		t.Errorf("feed caught up: %s", body)
+	}
+	if body := do(h, get(followingPath, "user", nil)).Body.String(); !strings.Contains(body, "Nothing from your feeds in the last 30 days") {
 		t.Errorf("all empty: %s", body)
 	}
 }
@@ -511,7 +657,7 @@ func TestSubscribeDuringSync(t *testing.T) {
 	// The in-flight sync commits now, stamped with its start time.
 	syncItems(t, d, a.ID, syncStart, "old", "new")
 	wantCounts(t, h, 1, map[int64]string{a.ID: "1"})
-	if body := do(h, get(readingPath, "user", nil)).Body.String(); !strings.Contains(body, "Post new") || strings.Contains(body, "Post old") {
+	if body := do(h, get(homePath, "user", nil)).Body.String(); !strings.Contains(body, "Post new") || strings.Contains(body, "Post old") {
 		t.Errorf("unread list: %s", body)
 	}
 }
@@ -526,8 +672,8 @@ func TestReadingBackKeepsCursor(t *testing.T) {
 		keys[i] = fmt.Sprintf("k%02d", i)
 	}
 	syncItems(t, d, a.ID, time.Now().Unix(), keys...)
-	first := do(h, get(readingPath, "user", nil)).Body.String()
-	if strings.Contains(first, `name="back" value="/reading?before=`) {
+	first := do(h, get(homePath, "user", nil)).Body.String()
+	if strings.Contains(first, `name="back" value="/?before=`) {
 		t.Errorf("first page back carries a cursor")
 	}
 	m := olderRe.FindStringSubmatch(first)
@@ -545,8 +691,8 @@ func TestReadingBackKeepsCursor(t *testing.T) {
 		t.Fatalf("back on page 2 = %q, want %s#item-...", back, older)
 	}
 	// And the redirect goes there.
-	id := regexp.MustCompile(`action="/reading/items/(\d+)/read"`).FindStringSubmatch(second)[1]
-	res := post(t, h, "/reading/items/"+id+"/read", url.Values{"back": {back}}, nil)
+	id := regexp.MustCompile(`action="/items/(\d+)/read"`).FindStringSubmatch(second)[1]
+	res := post(t, h, "/items/"+id+"/read", url.Values{"back": {back}}, nil)
 	if res.Header.Get("Location") != back {
 		t.Errorf("Location = %q, want %q", res.Header.Get("Location"), back)
 	}
@@ -569,18 +715,18 @@ func TestReadingActionFocus(t *testing.T) {
 	post(t, h, fmt.Sprintf("/feeds/%d/subscribe", a.ID), nil, nil)
 	ids := syncItems(t, d, a.ID, time.Now().Unix(), "a1", "a2")
 	for _, action := range []string{"read", "unread"} {
-		rec = do(h, postForm(fmt.Sprintf("/reading/items/%d/%s", ids["a2"], action), nil, "user", hx))
+		rec = do(h, postForm(fmt.Sprintf("/items/%d/%s", ids["a2"], action), nil, "user", hx))
 		if !strings.Contains(rec.Body.String(), fmt.Sprintf(`id="item-%d" tabindex="-1" autofocus>`, ids["a2"])) {
 			t.Errorf("mark %s fragment focus: %s", action, rec.Body)
 		}
 	}
-	_, _, upto := readingState(t, h, readingPath)
-	rec = do(h, postForm("/reading/mark-all-read", url.Values{"upto": {upto}}, "user", hx))
-	if !strings.Contains(rec.Body.String(), `<p class="tally" tabindex="-1" autofocus>`) {
+	_, _, upto := readingState(t, h, homePath)
+	rec = do(h, postForm("/mark-all-read", url.Values{"upto": {upto}}, "user", hx))
+	if !strings.Contains(rec.Body.String(), `<a href="/" aria-current="page" autofocus>Unread <span id="unread-total"`) || strings.Count(rec.Body.String(), "autofocus") != 1 {
 		t.Errorf("mark all read focus: %s", rec.Body)
 	}
 	// Full pages never autofocus.
-	if body := do(h, get(readingPath+"?view=all", "user", nil)).Body.String(); strings.Contains(body, "autofocus") {
+	if body := do(h, get(followingPath, "user", nil)).Body.String(); strings.Contains(body, "autofocus") {
 		t.Error("full page autofocuses")
 	}
 }
@@ -598,22 +744,22 @@ func TestReadingFilteredTally(t *testing.T) {
 	ia := syncItems(t, d, a.ID, now, "a1", "a2")
 	syncItems(t, d, b.ID, now, "b1", "b2", "b3")
 
-	pathA := fmt.Sprintf("/reading?feed=%d", a.ID)
+	pathA := fmt.Sprintf("/feeds/%d", a.ID)
 	body, total, _ := readingState(t, h, pathA)
 	if total != 2 || !strings.Contains(body, "Mark all read") {
 		t.Errorf("feed a: total %d", total)
 	}
 	// htmx mark read from the filtered page: the out-of-band total is a's.
-	rec := do(h, postForm(fmt.Sprintf("/reading/items/%d/read", ia["a1"]), url.Values{"feed": {strconv.FormatInt(a.ID, 10)}}, "user", hx))
+	rec := do(h, postForm(fmt.Sprintf("/items/%d/read", ia["a1"]), url.Values{"feed": {strconv.FormatInt(a.ID, 10)}}, "user", hx))
 	if !strings.Contains(rec.Body.String(), `<span id="unread-total" class="n" hx-swap-oob="true">1</span>`) {
 		t.Errorf("scoped total: %s", rec.Body)
 	}
-	post(t, h, fmt.Sprintf("/reading/items/%d/read", ia["a2"]), nil, nil)
+	post(t, h, fmt.Sprintf("/items/%d/read", ia["a2"]), nil, nil)
 	body, total, _ = readingState(t, h, pathA)
-	if total != 0 || strings.Contains(body, `action="/reading/mark-all-read"`) {
+	if total != 0 || strings.Contains(body, `action="/mark-all-read"`) {
 		t.Errorf("feed a caught up: total %d, mark-all shown: %v", total, strings.Contains(body, "mark-all-read"))
 	}
-	if _, total, _ = readingState(t, h, readingPath); total != 3 {
+	if _, total, _ = readingState(t, h, homePath); total != 3 {
 		t.Errorf("all feeds total = %d, want 3", total)
 	}
 }
@@ -628,9 +774,9 @@ func TestEntryMarkControls(t *testing.T) {
 	if _, err := d.Writer.Exec(`UPDATE item_contents SET html = '' WHERE item_id = ?`, ids["bare"]); err != nil {
 		t.Fatal(err)
 	}
-	body := do(h, get(readingPath, "user", nil)).Body.String()
+	body := do(h, get(homePath, "user", nil)).Body.String()
 	for k, want := range map[string]int{"full": 2, "bare": 1} {
-		if n := strings.Count(body, fmt.Sprintf(`action="/reading/items/%d/read"`, ids[k])); n != want {
+		if n := strings.Count(body, fmt.Sprintf(`action="/items/%d/read"`, ids[k])); n != want {
 			t.Errorf("%s: %d mark-read forms, want %d", k, n, want)
 		}
 	}
@@ -660,7 +806,7 @@ func TestReadingPostedOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	body, total, _ := readingState(t, h, readingPath)
+	body, total, _ := readingState(t, h, homePath)
 	if total != 2 {
 		t.Errorf("unread = %d, want 2", total)
 	}
@@ -678,7 +824,7 @@ func TestReadingPostedOrder(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	body, total, _ = readingState(t, h, readingPath+"?view=all")
+	body, total, _ = readingState(t, h, followingPath)
 	if total != 2 || strings.Contains(body, "Post ancient") {
 		t.Errorf("out-of-window post: total %d", total)
 	}

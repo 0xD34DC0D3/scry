@@ -1317,31 +1317,15 @@ td code {
   margin: calc(-1 * var(--s3)) 0 var(--s3);
 }
 
-/* below a feed's backlink the toolbar keeps its normal gap */
-.backlink + #reading-panel .toolbar {
+/* the negative margin tucks the toolbar under a visible h1; below a feed's
+   header or a visually hidden h1 it keeps its normal gap */
+.sub + #reading-panel .toolbar,
+.vh + #reading-panel .toolbar,
+.vh + .toolbar {
   margin-top: 0;
 }
 
-.tally {
-  margin: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.tally .n {
-  font: 700 2rem/1 var(--mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.tally .label {
-  font: 700 0.75rem var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-}
-
-/* segmented Unread | All switch */
+/* segmented view switch: Unread | Following | Everything, or Unread | All */
 .seg {
   display: inline-flex;
   border: var(--b-sm) solid var(--ink);
@@ -1358,6 +1342,11 @@ td code {
   letter-spacing: 0.05em;
   text-decoration: none;
   padding: 0 0.875rem;
+}
+
+.seg .n {
+  margin-left: 0.375rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .seg a + a {
@@ -1696,13 +1685,6 @@ td code {
   color: var(--muted);
 }
 
-.sub-read {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--tap);
-  font: 700 0.75rem var(--mono);
-}
-
 .feed-meta + .sub {
   margin: calc(-1 * var(--s2)) 0 var(--s4);
 }
@@ -1919,10 +1901,6 @@ td code {
 
   .toolbar {
     margin-top: calc(-1 * var(--s2));
-  }
-
-  .tally {
-    flex: 1 1 auto;
   }
 
   .mark-all {

@@ -92,9 +92,10 @@ func New(app, siteURL string, pages fs.FS, auth *voodooauth.Client) *Renderer {
 // block that alone replaces part of the page for an htmx request. Status is
 // the HTTP status, 200 when zero.
 //
-// Nav names the header link marked aria-current ("reading", "latest", "feeds",
-// "admin"); NavSub says the page sits below that link's page (one feed
-// under /feeds), so the link gets aria-current="true" instead of "page".
+// Nav names the header link marked aria-current ("home" for the app link,
+// "feeds", "admin"); NavSub says the page sits below that link's page (one
+// feed under /feeds, /following under /), so the link gets
+// aria-current="true" instead of "page".
 // Wide opts into main.wide, for table-heavy pages.
 type View struct {
 	Page     string

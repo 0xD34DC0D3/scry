@@ -19,11 +19,16 @@ import (
 )
 
 // Reading: signed-in users subscribe to feeds and read their items with the
-// full sanitized HTML. Everything here is personal, so it is never stored
-// by a cache (private, no-store).
+// full sanitized HTML, on the home stream (Unread at /, Following) and on a
+// subscribed feed's page. Everything here is personal, so it is never
+// stored by a cache (private, no-store).
 
 const (
-	readingPath = "/reading"
+	// The home stream's three views, one switch: subscribed unread items,
+	// every subscribed item in the window, and every feed (excerpts).
+	homePath       = "/"
+	followingPath  = "/following"
+	everythingPath = "/everything"
 	// readingPageSize is far smaller than the public lists': each entry
 	// carries a whole article (20 real ones measured about 117,000 px).
 	readingPageSize = 10
@@ -31,10 +36,10 @@ const (
 
 func (s *server) readingRoutes(mux *http.ServeMux) {
 	user := func(h http.HandlerFunc) http.Handler { return s.auth.RequireUser(h) }
-	mux.Handle("GET "+readingPath, user(s.reading))
-	mux.Handle("POST "+readingPath+"/mark-all-read", user(s.markAllRead))
-	mux.Handle("POST "+readingPath+"/items/{id}/read", user(s.markItem(true)))
-	mux.Handle("POST "+readingPath+"/items/{id}/unread", user(s.markItem(false)))
+	mux.Handle("GET "+followingPath, user(s.following))
+	mux.Handle("POST /mark-all-read", user(s.markAllRead))
+	mux.Handle("POST /items/{id}/read", user(s.markItem(true)))
+	mux.Handle("POST /items/{id}/unread", user(s.markItem(false)))
 	mux.Handle("POST /feeds/{id}/subscribe", user(s.subscription(true)))
 	mux.Handle("POST /feeds/{id}/unsubscribe", user(s.subscription(false)))
 }
@@ -45,7 +50,32 @@ type subView struct {
 	Name   string
 	Paused bool
 	Unread int64
-	Link   string // this feed's reading list, keeping the view
+	Link   string // this feed's page, keeping the view
+}
+
+// seg is one link of a segmented view switch.
+type seg struct {
+	Label, Href string
+	Current     bool
+	Count       bool // carries the unread count (#unread-total)
+}
+
+// viewSwitch is the segmented control that narrows a post list: Unread |
+// Following | Everything on the home stream, Unread | All on a feed's page.
+// The unread count for its scope sits in the Unread label.
+type viewSwitch struct {
+	Segs  []seg
+	Total int64
+	Focus bool // after "mark all read": focus the current segment
+}
+
+// homeSwitch is the home stream's switch with current marked.
+func homeSwitch(current string, total int64) *viewSwitch {
+	return &viewSwitch{Total: total, Segs: []seg{
+		{Label: "Unread", Href: homePath, Current: current == homePath, Count: true},
+		{Label: "Following", Href: followingPath, Current: current == followingPath},
+		{Label: "Everything", Href: everythingPath, Current: current == everythingPath},
+	}}
 }
 
 // readingItem is one entry. HTML comes only from item_contents.html, which
@@ -62,20 +92,18 @@ type readingItem struct {
 }
 
 type readingData struct {
-	Subs     []subView
-	Total    int64    // unread in the page's scope: every feed, or the filter's
-	Focus    bool     // after "mark all read": focus the tally
-	Feed     *subView // the feed filter, nil for every feed
-	All      bool     // show read items too
-	Items    []readingItem
-	Older    string
-	UptoID   int64  // the newest item id at render, for "mark all read"
-	Self     string // this list's URL without the cursor
-	AllFeeds string // the list without the feed filter, keeping the view
-	Tabs     readingTabs
+	Header  *feedView // the feed page's header; nil on the home stream
+	Switch  *viewSwitch
+	Subs    []subView
+	Total   int64    // unread in the page's scope: every feed, or the page's feed
+	Feed    *subView // the page's feed, nil on the home stream
+	All     bool     // show read items too
+	Items   []readingItem
+	Older   string
+	UptoID  int64  // the newest item id at render, for "mark all read"
+	Self    string // this list's URL without the cursor
+	AllLink string // the same scope with read items too (the caught-up link)
 }
-
-type readingTabs struct{ Unread, All string }
 
 // entryData is what an item action answers htmx with: the entry, plus the
 // fresh counts swapped out of band into the toolbar (for the page's scope)
@@ -115,8 +143,8 @@ func readingItemFrom(it db.ListReadingItemsRow, now time.Time) readingItem {
 	}
 }
 
-// readingQuery is the list's filter, parsed from the query string (GET) or
-// the form (POST).
+// readingQuery is the list's scope: the home stream (feed 0) or one
+// feed's page, unread only or all. Item forms post it back as feed and view.
 type readingQuery struct {
 	feed int64
 	all  bool
@@ -135,43 +163,65 @@ func parseReadingQuery(v url.Values) (readingQuery, bool) {
 }
 
 func (q readingQuery) url() string {
-	v := url.Values{}
-	if q.feed != 0 {
-		v.Set("feed", strconv.FormatInt(q.feed, 10))
+	switch {
+	case q.feed != 0 && q.all:
+		return fmt.Sprintf("/feeds/%d?view=all", q.feed)
+	case q.feed != 0:
+		return fmt.Sprintf("/feeds/%d", q.feed)
+	case q.all:
+		return followingPath
 	}
-	if q.all {
-		v.Set("view", "all")
-	}
-	if len(v) == 0 {
-		return readingPath
-	}
-	return readingPath + "?" + v.Encode()
+	return homePath
 }
 
-func (s *server) reading(w http.ResponseWriter, r *http.Request) {
-	q, ok := parseReadingQuery(r.URL.Query())
-	at, id, ok2 := cursor(r)
-	if !ok || !ok2 {
+// home is Unread for a signed-in user with a subscription, else Everything.
+func (s *server) home(w http.ResponseWriter, r *http.Request) {
+	if voodooauth.UserFrom(r.Context()) == nil {
+		s.everything(w, r)
+		return
+	}
+	at, id, ok := cursor(r)
+	if !ok {
 		s.badRequest(w, r, "That page link is malformed.")
 		return
 	}
-	d, found, err := s.readingData(r, q, at, id)
+	d, _, err := s.readingData(r, readingQuery{}, at, id)
 	if err != nil {
 		s.internalError(w, r, "reading", err)
 		return
 	}
-	if !found {
-		// Not subscribed to that feed (or it is gone): show everything.
-		http.Redirect(w, r, readingQuery{all: q.all}.url(), http.StatusSeeOther)
+	if len(d.Subs) == 0 {
+		s.everything(w, r)
 		return
 	}
+	s.renderReading(w, r, d, "Unread")
+}
+
+// following is every subscribed item in the window, read ones too.
+func (s *server) following(w http.ResponseWriter, r *http.Request) {
+	at, id, ok := cursor(r)
+	if !ok {
+		s.badRequest(w, r, "That page link is malformed.")
+		return
+	}
+	d, _, err := s.readingData(r, readingQuery{all: true}, at, id)
+	if err != nil {
+		s.internalError(w, r, "reading", err)
+		return
+	}
+	s.renderReading(w, r, d, "Following")
+}
+
+// renderReading answers with a reading list: the page, or on htmx the
+// Older page's entries.
+func (s *server) renderReading(w http.ResponseWriter, r *http.Request, d readingData, title string) {
 	personal(w)
 	setReadingCSP(w)
-	title := "Reading"
-	if d.Feed != nil {
-		title = d.Feed.Name
+	v := web.View{Page: "reading", Fragment: "reading-page", Title: title, Data: d, Nav: "home", NavSub: d.Self != homePath}
+	if d.Header != nil {
+		v.Nav, v.NavSub = "feeds", true
 	}
-	s.web.Render(w, r, web.View{Page: "reading", Fragment: "reading-page", Title: title, Data: d, Nav: "reading", NavSub: d.Feed != nil})
+	s.web.Render(w, r, v)
 }
 
 // setReadingCSP lets article images load from other https sites; every
@@ -182,8 +232,8 @@ func setReadingCSP(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", readingContentSecurityPolicy)
 }
 
-// readingData loads one page of the list. found is false when the feed
-// filter names a feed the user is not subscribed to.
+// readingData loads one page of the list. found is false when q names a
+// feed the user is not subscribed to.
 func (s *server) readingData(r *http.Request, q readingQuery, at, id int64) (readingData, bool, error) {
 	ctx := r.Context()
 	uid := userID(r)
@@ -197,7 +247,7 @@ func (s *server) readingData(r *http.Request, q readingQuery, at, id int64) (rea
 	if err != nil {
 		return readingData{}, false, err
 	}
-	d := readingData{All: q.all, UptoID: upto, Self: q.url(), AllFeeds: readingQuery{all: q.all}.url()}
+	d := readingData{All: q.all, UptoID: upto, Self: q.url(), AllLink: readingQuery{feed: q.feed, all: true}.url()}
 	var all int64
 	d.Subs = make([]subView, len(subRows))
 	for i, sr := range subRows {
@@ -217,7 +267,14 @@ func (s *server) readingData(r *http.Request, q readingQuery, at, id int64) (rea
 	if d.Feed != nil {
 		d.Total = d.Feed.Unread
 	}
-	d.Tabs = readingTabs{Unread: readingQuery{feed: q.feed}.url(), All: readingQuery{feed: q.feed, all: true}.url()}
+	if d.Feed != nil {
+		d.Switch = &viewSwitch{Total: d.Total, Segs: []seg{
+			{Label: "Unread", Href: readingQuery{feed: q.feed}.url(), Current: !q.all, Count: true},
+			{Label: "All", Href: d.AllLink, Current: q.all},
+		}}
+	} else {
+		d.Switch = homeSwitch(d.Self, d.Total)
+	}
 	if len(d.Subs) == 0 {
 		return d, true, nil
 	}
@@ -338,7 +395,7 @@ func (s *server) markItem(read bool) http.HandlerFunc {
 			s.internalError(w, r, "get reading item", err)
 			return
 		}
-		back := localBack(r, readingPath)
+		back := localBack(r, homePath)
 		if !isHTMX(r) {
 			http.Redirect(w, r, back, http.StatusSeeOther)
 			return
@@ -402,7 +459,7 @@ func (s *server) markAllRead(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "reading", err)
 		return
 	}
-	d.Focus = true // the button is gone with the swap
+	d.Switch.Focus = true // the button is gone with the swap
 	personal(w)
 	setReadingCSP(w)
 	s.web.Render(w, r, web.View{Page: "reading-panel", Fragment: "reading-panel", Data: d})
@@ -461,6 +518,9 @@ type subControl struct {
 	Unread     int64
 	Back       string
 	Focus      bool // htmx moves focus to the button after the swap
+	// Plain drops htmx from the form: on a feed's page subscribing switches
+	// the whole page between excerpts and the reader, so it must reload.
+	Plain bool
 }
 
 // Secondary is true in the catalog, where every row has a Subscribe

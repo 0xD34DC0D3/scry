@@ -23,13 +23,9 @@
     <div class="brand">
       <a class="org" href="{{.SiteURL}}/" aria-label="deadcode home"><span class="tile" aria-hidden="true">0x</span></a>
       <span class="sep" aria-hidden="true">/</span>
-      <a class="app" href="/">{{.App}}</a>
+      <a class="app" href="/"{{with .Current "home"}} aria-current="{{.}}"{{end}}>{{.App}}</a>
     </div>
     <nav aria-label="Main">
-      {{- if .User}}
-      <a href="/reading"{{with .Current "reading"}} aria-current="{{.}}"{{end}}>reading</a>
-      {{- end}}
-      <a href="/"{{with .Current "latest"}} aria-current="{{.}}"{{end}}>latest</a>
       <a href="/feeds"{{with .Current "feeds"}} aria-current="{{.}}"{{end}}>feeds</a>
       {{- if and .User .User.IsAdmin}}
       <a href="/admin/feeds"{{with .Current "admin"}} aria-current="{{.}}"{{end}}>admin</a>

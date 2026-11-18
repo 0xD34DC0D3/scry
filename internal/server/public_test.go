@@ -112,7 +112,7 @@ func TestPublicPages(t *testing.T) {
 			path: feedA,
 			want: []string{
 				"<h1>Alpha News</h1>", "Alpha one", "Alpha two",
-				`href="https://a.example/">Visit site</a>`, `<a href="/feeds">← All feeds</a>`,
+				`href="https://a.example/">Visit site</a>`, `<a href="/feeds">← Feeds</a>`,
 				`readonly value="https://a.example/feed"`, "Feed URL — paste into your reader",
 			},
 			not: []string{"Alpha ancient", "Bravo evil", "FULLHTML", `class="path"`, `>rss</a>`, `>website</a>`},
@@ -189,7 +189,7 @@ func TestPublicCacheHeaders(t *testing.T) {
 		{"other auth", "", map[string]string{"Authorization": "Basic Zm9vOmJhcg=="}, privateCache},
 	}
 	for _, tc := range tests {
-		for _, p := range []string{"/", "/feeds", feedA} {
+		for _, p := range []string{"/", "/everything", "/feeds", feedA} {
 			t.Run(tc.name+" "+p, func(t *testing.T) {
 				rec := do(f.h, get(p, tc.cookie, tc.hdr))
 				if rec.Code != http.StatusOK {
@@ -223,7 +223,7 @@ func TestPublicSignedInHeader(t *testing.T) {
 
 func TestPublicFragment(t *testing.T) {
 	f := newPublicFixture(t)
-	for _, p := range []string{"/", fmt.Sprintf("/feeds/%d", f.a.ID)} {
+	for _, p := range []string{"/", "/everything", fmt.Sprintf("/feeds/%d", f.a.ID)} {
 		t.Run(p, func(t *testing.T) {
 			full := do(f.h, get(p, "", nil)).Body.String()
 			frag := do(f.h, get(p, "", hx)).Body.String()
@@ -263,7 +263,7 @@ func TestPublicPaging(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, start := range []string{"/", fmt.Sprintf("/feeds/%d", fd.ID)} {
+	for _, start := range []string{"/", "/everything", fmt.Sprintf("/feeds/%d", fd.ID)} {
 		t.Run(start, func(t *testing.T) {
 			seen := map[string]bool{}
 			path, pages := start, 0

@@ -67,7 +67,7 @@ func TestFeedLastPost(t *testing.T) {
 			if !strings.Contains(body, tc.want) {
 				t.Errorf("missing %q in %s", tc.want, body)
 			}
-			if !strings.Contains(body, `<a href="/">See the latest from every feed</a>`) {
+			if !strings.Contains(body, `<a href="/everything">See the latest from every feed</a>`) {
 				t.Error("lost the link to Latest")
 			}
 		})
@@ -139,7 +139,8 @@ func TestNavCurrent(t *testing.T) {
 		want         string
 		not          []string
 	}{
-		{"/", "", `<a href="/" aria-current="page">latest</a>`, []string{`href="/feeds" aria-current`}},
+		{"/", "", `<a class="app" href="/" aria-current="page">scry</a>`, []string{`href="/feeds" aria-current`, ">latest</a>", ">reading</a>"}},
+		{"/everything", "", `<a class="app" href="/" aria-current="true">scry</a>`, []string{`href="/feeds" aria-current`}},
 		{"/feeds", "", `<a href="/feeds" aria-current="page">feeds</a>`, []string{`href="/" aria-current`}},
 		// One feed sits below /feeds: the section, not the page.
 		{fmt.Sprintf("/feeds/%d", f.a.ID), "", `<a href="/feeds" aria-current="true">feeds</a>`, []string{`aria-current="page"`}},
@@ -189,8 +190,8 @@ func TestEmptyStates(t *testing.T) {
 		want, not          []string
 	}{
 		{"latest anonymous", "/", "", []string{`class="empty"`, `href="/feeds">Browse the feeds</a>`}, []string{"everything from the last 30 days"}},
-		{"latest admin", "/", "admin", []string{`href="/admin/feeds">Manage feeds</a>`}, []string{"Browse the feeds"}},
-		{"feed", fmt.Sprintf("/feeds/%d", empty.ID), "", []string{`class="empty"`, `<a href="/">See the latest from every feed</a>`}, []string{"everything from the last 30 days"}},
+		{"latest admin", "/", "admin", []string{`href="/admin/feeds">Manage feeds</a>`}, []string{`<p class="empty">Nothing in the last 30 days. <a href="/feeds">`}},
+		{"feed", fmt.Sprintf("/feeds/%d", empty.ID), "", []string{`class="empty"`, `<a href="/everything">See the latest from every feed</a>`}, []string{"everything from the last 30 days"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -220,7 +221,7 @@ func TestEmptyStates(t *testing.T) {
 func TestEndOfList(t *testing.T) {
 	f := newPublicFixture(t)
 	const end = `<li class="end">That's everything from the last 30 days.</li>`
-	for _, p := range []string{"/", fmt.Sprintf("/feeds/%d", f.a.ID)} {
+	for _, p := range []string{"/", "/everything", fmt.Sprintf("/feeds/%d", f.a.ID)} {
 		for name, hdr := range map[string]map[string]string{"full": nil, "fragment": hx} {
 			t.Run(p+" "+name, func(t *testing.T) {
 				if body := do(f.h, get(p, "", hdr)).Body.String(); !strings.Contains(body, end) {
@@ -251,9 +252,17 @@ func TestOlderFocusAndHeadings(t *testing.T) {
 	if strings.Count(frag, "autofocus") != 1 || !strings.Contains(frag, `<li class="item" tabindex="-1" autofocus>`) {
 		t.Errorf("fragment autofocus: %s", frag)
 	}
-	for _, p := range []string{"/", "/feeds", fmt.Sprintf("/feeds/%d", f.a.ID), "/nope"} {
+	for _, p := range []string{"/", "/everything", "/feeds", fmt.Sprintf("/feeds/%d", f.a.ID), "/nope"} {
 		if body := do(f.h, get(p, "", nil)).Body.String(); strings.Contains(body, "<h3") {
 			t.Errorf("%s skips from h1 to h3", p)
+		}
+	}
+	// The reader pages too, each with one h1.
+	do(f.h, postForm(fmt.Sprintf("/feeds/%d/subscribe", f.a.ID), nil, "user", nil))
+	for _, p := range []string{"/", "/following", "/everything", fmt.Sprintf("/feeds/%d", f.a.ID)} {
+		body := do(f.h, get(p, "user", nil)).Body.String()
+		if strings.Contains(body, "<h3") || strings.Count(body, "<h1") != 1 {
+			t.Errorf("%s signed in: headings wrong", p)
 		}
 	}
 }

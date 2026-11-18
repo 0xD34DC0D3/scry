@@ -1,4 +1,4 @@
-{{/* Public views: latest items, the catalog, one feed's items. Excerpts are
+{{/* Public views: Everything, the catalog, one feed's items. Excerpts are
      plain text; titles and URLs go through html/template's escaping, so a
      javascript: item URL renders as #ZgotmplZ. "items-page" is the fragment
      the "Older" link fetches with htmx and swaps in place of itself; in that
@@ -6,15 +6,30 @@
      after the swap, so keyboard focus lands on the first new item instead of
      falling back to <body>. Admin-only bits are cache-safe: an admin request
      carries a credential, so setCache makes it private, no-store. */}}
-{{define "latest"}}{{template "top" .}}
-<h1>Latest</h1>
+{{/* Everything: the home stream's switch when the user has subscriptions
+     (the visible switch names the view, so the h1 is for screen readers),
+     a nudge to subscribe when signed in without any, a sign-in note when
+     signed out. */}}
+{{define "everything"}}{{template "top" .}}
+{{with .Data.Switch}}<h1 class="vh">Everything</h1>
+<div class="toolbar">{{template "switch" .}}</div>
+{{else}}<h1>Latest</h1>{{end}}
+{{if .Data.Nudge}}<p class="note">You haven't subscribed to any feeds yet. <a href="/feeds">Browse the feeds</a> and subscribe to read their new posts in full here.</p>
+{{else if not .User}}<p class="note"><a href="{{.LoginURL}}">Sign in</a> to subscribe and read full posts.</p>{{end}}
 {{template "item-list" .}}
 {{template "bottom" .}}{{end}}
 
+{{/* A feed's page for anyone not subscribed: header, then excerpts. */}}
 {{define "feed"}}{{template "top" .}}
-{{with .Data.Feed}}
-<h1>{{.Heading}}</h1>
-<p class="backlink"><a href="/feeds">← All feeds</a></p>
+{{template "feed-head" .Data.Feed}}
+{{if not .User}}<p class="note"><a href="{{.LoginURL}}">Sign in</a> to subscribe and read full posts.</p>{{end}}
+{{template "item-list" .}}
+{{template "bottom" .}}{{end}}
+
+{{/* The feed page's header, shared with the subscribed reader; . is the
+     feedView. */}}
+{{define "feed-head"}}<h1>{{.Heading}}</h1>
+<p class="backlink"><a href="/feeds">← Feeds</a></p>
 <div class="feed-meta">
   {{if .Paused}}<span class="badge off">paused</span>{{end}}
   {{with .SiteURL}}<a href="{{.}}">Visit site</a>{{end}}
@@ -23,15 +38,12 @@
   <label for="feed-url"><span>Feed URL — paste into your reader</span></label>
   <input id="feed-url" type="text" readonly value="{{.URL}}">
 </div>
-{{with .Sub}}{{template "sub" .}}{{else}}{{if not $.User}}<p class="note"><a href="{{$.LoginURL}}">Sign in</a> to subscribe and read full posts.</p>{{end}}{{end}}
-{{end}}
-{{template "item-list" .}}
-{{template "bottom" .}}{{end}}
+{{with .Sub}}{{template "sub" .}}{{end}}{{end}}
 
 {{define "item-list"}}{{if .Data.Items}}
 <ol class="items">{{template "items-page" .}}</ol>
 {{else if .Data.Feed}}
-<p class="empty">{{if not .Data.Feed.LastPost.IsZero}}Nothing in the last 30 days (lists only show that window); last post was <time datetime="{{.Data.Feed.LastPost.Format "2006-01-02T15:04:05Z"}}">{{.Data.Feed.LastPost.Format "Jan 2, 2006"}}</time>.{{else}}This feed hasn't posted yet.{{end}} <a href="/">See the latest from every feed</a>.</p>
+<p class="empty">{{if not .Data.Feed.LastPost.IsZero}}Nothing in the last 30 days (lists only show that window); last post was <time datetime="{{.Data.Feed.LastPost.Format "2006-01-02T15:04:05Z"}}">{{.Data.Feed.LastPost.Format "Jan 2, 2006"}}</time>.{{else}}This feed hasn't posted yet.{{end}} <a href="/everything">See the latest from every feed</a>.</p>
 {{else if and .User .User.IsAdmin}}
 <p class="empty">Nothing in the last 30 days. <a href="/admin/feeds">Manage feeds</a>.</p>
 {{else}}

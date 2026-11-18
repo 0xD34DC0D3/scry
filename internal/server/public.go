@@ -17,9 +17,11 @@ import (
 	"github.com/0xD34DC0D3/scry/internal/web"
 )
 
-// The public views, open to everyone: latest items across feeds, the
-// catalog, and one feed's items. Excerpts only (plain text), linking out;
-// item_contents.html is for signed-in readers (step 6).
+// The public views, open to everyone: Everything (the latest items across
+// feeds; the home page signed out), the catalog, and one feed's items.
+// Excerpts only (plain text), linking out; item_contents.html is for
+// signed-in readers (reading.go), who get the reader on / and on a
+// subscribed feed's page instead.
 
 const (
 	// window is how far back the lists reach, by posted time (see itemView).
@@ -37,7 +39,8 @@ const (
 
 func (s *server) publicRoutes(mux *http.ServeMux) {
 	// {$} so only "/" matches; a bare "/" would answer every unknown path.
-	mux.HandleFunc("GET /{$}", s.latest)
+	mux.HandleFunc("GET /{$}", s.home)
+	mux.HandleFunc("GET "+everythingPath, s.everything)
 	mux.HandleFunc("GET /feeds", s.catalog)
 	mux.HandleFunc("GET /feeds/{id}", s.feedItems)
 }
@@ -218,9 +221,14 @@ type feedView struct {
 }
 
 type itemsData struct {
-	Feed  *feedView // nil on the latest page
-	Items []itemView
-	Older string // next page's URL, empty on the last page
+	Feed *feedView // nil on Everything
+	// Everything only: Switch is the home stream's view switch, for a
+	// signed-in user with a subscription; Nudge says to subscribe, for one
+	// without.
+	Switch *viewSwitch
+	Nudge  bool
+	Items  []itemView
+	Older  string // next page's URL, empty on the last page
 	// Shown and Total place the page in the window ("Showing 100 of 312")
 	// next to the Older link. Shown counts every item down to this page's
 	// last, so it is right in an htmx fragment that only appends a page.
@@ -237,7 +245,7 @@ func feedName(title, url string) string {
 
 // feedHeading is what the feed page shows as its title: the feed's title,
 // else its host (a bare URL reads as noise in an h1). feedName stays the
-// catalog and Latest label.
+// catalog and Everything label.
 func feedHeading(title, url string) string {
 	if title != "" {
 		return title
@@ -307,7 +315,10 @@ func hasCredential(r *http.Request) bool {
 	return r.Header.Get("Authorization") != ""
 }
 
-func (s *server) latest(w http.ResponseWriter, r *http.Request) {
+// everything lists the newest items from every feed as excerpts: /everything,
+// and / when there is no one to show Unread to. Its Older link always
+// names /everything, which serves the same list either way.
+func (s *server) everything(w http.ResponseWriter, r *http.Request) {
 	at, id, ok := cursor(r)
 	if !ok {
 		s.badRequest(w, r, "That page link is malformed.")
@@ -332,7 +343,7 @@ func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	d := itemsData{}
-	d.Items, d.Older = older("/", items)
+	d.Items, d.Older = older(everythingPath, items)
 	if d.Older != "" {
 		last := d.Items[len(d.Items)-1]
 		c, err := s.r.CountLatestItems(r.Context(), db.CountLatestItemsParams{
@@ -344,8 +355,26 @@ func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 		}
 		d.Shown, d.Total = c.Total-c.Older, c.Total
 	}
+	title := "Latest"
+	if voodooauth.UserFrom(r.Context()) != nil {
+		subs, err := s.subscriptionsOf(r)
+		if err != nil {
+			s.internalError(w, r, "list subscriptions", err)
+			return
+		}
+		if len(subs) == 0 {
+			d.Nudge = true
+		} else {
+			var unread int64
+			for _, sv := range subs {
+				unread += sv.Unread
+			}
+			d.Switch = homeSwitch(everythingPath, unread)
+			title = "Everything"
+		}
+	}
 	setCache(w, r)
-	s.web.Render(w, r, web.View{Page: "latest", Fragment: "items-page", Title: "Latest", Data: d, Nav: "latest"})
+	s.web.Render(w, r, web.View{Page: "everything", Fragment: "items-page", Title: title, Data: d, Nav: "home", NavSub: r.URL.Path != homePath})
 }
 
 func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
@@ -384,6 +413,20 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		s.badRequest(w, r, "That page link is malformed.")
 		return
+	}
+	// A subscriber gets the reader scoped to this feed; anyone else the
+	// excerpts below.
+	if voodooauth.UserFrom(r.Context()) != nil {
+		q := readingQuery{feed: fid, all: r.URL.Query().Get("view") == "all"}
+		d, found, err := s.readingData(r, q, at, id)
+		if err != nil {
+			s.internalError(w, r, "reading", err)
+			return
+		}
+		if found {
+			s.feedReader(w, r, d)
+			return
+		}
 	}
 	f, err := s.r.GetCatalogFeed(r.Context(), fid)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -428,7 +471,9 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 		}
 		fv.LastPost = lastPost(last)
 	}
-	fv.Sub = subFor(subs, fid, fv.Name, fmt.Sprintf("/feeds/%d", fid))
+	if fv.Sub = subFor(subs, fid, fv.Name, fmt.Sprintf("/feeds/%d", fid)); fv.Sub != nil {
+		fv.Sub.Plain = true
+	}
 	d := itemsData{Feed: fv}
 	d.Items, d.Older = older(fmt.Sprintf("/feeds/%d", fid), items)
 	if d.Older != "" {
@@ -444,4 +489,24 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 	}
 	setCache(w, r)
 	s.web.Render(w, r, web.View{Page: "feed", Fragment: "items-page", Title: fv.Heading, Data: d, Nav: "feeds", NavSub: true})
+}
+
+// feedReader renders a subscribed feed's page: the feed's header over its
+// reading list.
+func (s *server) feedReader(w http.ResponseWriter, r *http.Request, d readingData) {
+	f, err := s.r.GetCatalogFeed(r.Context(), d.Feed.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		s.notFound(w, r)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "get feed", err)
+		return
+	}
+	fv := &feedView{ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl, Paused: f.DisabledAt.Valid}
+	fv.Heading = feedHeading(f.Title, f.Url)
+	// No unread count here: the switch carries it, and stays current.
+	fv.Sub = &subControl{FeedID: f.ID, Name: fv.Name, Subscribed: true, Back: fmt.Sprintf("/feeds/%d", f.ID), Plain: true}
+	d.Header = fv
+	s.renderReading(w, r, d, fv.Heading)
 }
