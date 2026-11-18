@@ -58,5 +58,8 @@ func (d Deps) register(c inngestgo.Client) error {
 	if err := d.registerSyncFeed(c); err != nil {
 		return err
 	}
-	return d.registerSchedule(c)
+	if err := d.registerSchedule(c); err != nil {
+		return err
+	}
+	return d.registerPrune(c)
 }

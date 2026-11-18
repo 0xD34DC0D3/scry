@@ -452,6 +452,56 @@ func (q *Queries) PauseFeed(ctx context.Context, id int64) (int64, error) {
 	return result.RowsAffected()
 }
 
+const pruneItemContents = `-- name: PruneItemContents :execrows
+
+DELETE FROM item_contents
+WHERE rowid IN (
+    SELECT c.rowid FROM item_contents c
+    WHERE c.fetched_at < ?1
+    ORDER BY c.fetched_at
+    LIMIT ?2
+)
+`
+
+type PruneItemContentsParams struct {
+	Cutoff int64
+	Lim    int64
+}
+
+// Pruning (internal/jobs/prune.go). One short write per batch; the index on
+// the time column finds the oldest rows without a table scan. Both tables
+// have a rowid (item_contents' is item_id).
+func (q *Queries) PruneItemContents(ctx context.Context, arg PruneItemContentsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pruneItemContents, arg.Cutoff, arg.Lim)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const pruneItemReads = `-- name: PruneItemReads :execrows
+DELETE FROM item_reads
+WHERE rowid IN (
+    SELECT r.rowid FROM item_reads r
+    WHERE r.read_at < ?1
+    ORDER BY r.read_at
+    LIMIT ?2
+)
+`
+
+type PruneItemReadsParams struct {
+	Cutoff int64
+	Lim    int64
+}
+
+func (q *Queries) PruneItemReads(ctx context.Context, arg PruneItemReadsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pruneItemReads, arg.Cutoff, arg.Lim)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const resumeFeed = `-- name: ResumeFeed :execrows
 UPDATE feeds
 SET disabled_at = NULL, fail_count = 0, last_error = '', next_fetch_at = 0

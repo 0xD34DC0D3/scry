@@ -84,7 +84,7 @@ func TestJobsRouteThroughMiddleware(t *testing.T) {
 func TestJobsRouteRealSDK(t *testing.T) {
 	h := newTestHandler(t)
 	rec := do(h, httptest.NewRequest(http.MethodGet, jobs.Path, nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"function_count":2`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"function_count":3`) {
 		t.Fatalf("GET %s = %d %s", jobs.Path, rec.Code, rec.Body.String())
 	}
 }

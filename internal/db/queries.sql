@@ -123,3 +123,25 @@ ORDER BY f.title = '', f.title COLLATE NOCASE, f.url;
 
 -- name: GetCatalogFeed :one
 SELECT id, url, title, site_url, disabled_at FROM feeds WHERE id = ?;
+
+-- Pruning (internal/jobs/prune.go). One short write per batch; the index on
+-- the time column finds the oldest rows without a table scan. Both tables
+-- have a rowid (item_contents' is item_id).
+
+-- name: PruneItemContents :execrows
+DELETE FROM item_contents
+WHERE rowid IN (
+    SELECT c.rowid FROM item_contents c
+    WHERE c.fetched_at < sqlc.arg(cutoff)
+    ORDER BY c.fetched_at
+    LIMIT sqlc.arg(lim)
+);
+
+-- name: PruneItemReads :execrows
+DELETE FROM item_reads
+WHERE rowid IN (
+    SELECT r.rowid FROM item_reads r
+    WHERE r.read_at < sqlc.arg(cutoff)
+    ORDER BY r.read_at
+    LIMIT sqlc.arg(lim)
+);
