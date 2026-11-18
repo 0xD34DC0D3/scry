@@ -6,15 +6,20 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"html"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/mmcdole/gofeed"
+	"github.com/mmcdole/gofeed/rss"
 )
 
-const maxExcerpt = 300 // runes
+const (
+	maxExcerpt  = 300  // runes
+	maxComments = 2048 // bytes, as for feed URLs
+)
 
 // Policies are safe for concurrent use once built.
 var (
@@ -22,6 +27,9 @@ var (
 	// The space keeps "<p>a</p><p>b</p>" from reading as "ab"; script and
 	// style contents are dropped, not kept as text.
 	strict = bluemonday.StrictPolicy().AddSpaceWhenStrippingTag(true)
+	// noLinks is strict minus link text, to tell a real summary from one
+	// that is only "Comments" or "Read more" links.
+	noLinks = bluemonday.StrictPolicy().AddSpaceWhenStrippingTag(true).SkipElementsContent("a")
 )
 
 type parsedFeed struct {
@@ -31,12 +39,15 @@ type parsedFeed struct {
 
 type parsedItem struct {
 	dedupKey, url, title, author string
+	commentsURL                  string
 	publishedAt                  *time.Time
 	html, excerpt                string
 }
 
 func parseFeed(body []byte) (parsedFeed, error) {
-	f, err := gofeed.NewParser().Parse(bytes.NewReader(body))
+	fp := gofeed.NewParser()
+	fp.RSSTranslator = rssTranslator{}
+	f, err := fp.Parse(bytes.NewReader(body))
 	if err != nil {
 		return parsedFeed{}, err
 	}
@@ -49,12 +60,16 @@ func parseFeed(body []byte) (parsedFeed, error) {
 			raw = it.Description
 		}
 		clean := ugc.Sanitize(raw)
+		if linksOnly(clean) {
+			clean = ""
+		}
 		p := parsedItem{
-			dedupKey: dedupKey(it),
-			url:      strings.TrimSpace(it.Link),
-			title:    strings.TrimSpace(it.Title),
-			html:     clean,
-			excerpt:  excerpt(clean),
+			dedupKey:    dedupKey(it),
+			url:         strings.TrimSpace(it.Link),
+			title:       strings.TrimSpace(it.Title),
+			commentsURL: commentsURL(it.Custom[commentsKey]),
+			html:        clean,
+			excerpt:     excerpt(clean),
 		}
 		if len(it.Authors) > 0 {
 			p.author = strings.TrimSpace(it.Authors[0].Name)
@@ -63,6 +78,61 @@ func parseFeed(body []byte) (parsedFeed, error) {
 		out.items = append(out.items, p)
 	}
 	return out, nil
+}
+
+// commentsKey holds RSS <comments> in gofeed.Item.Custom. A colon cannot
+// start an XML element name, so no unknown element gofeed keeps there can
+// collide with it.
+const commentsKey = ":comments"
+
+// rssTranslator is gofeed's RSS translation plus <comments>, which gofeed
+// v1.5.0 parses but leaves off the universal Item.
+type rssTranslator struct{ gofeed.DefaultRSSTranslator }
+
+func (t rssTranslator) Translate(feed any) (*gofeed.Feed, error) {
+	f, err := t.DefaultRSSTranslator.Translate(feed)
+	if err != nil {
+		return nil, err
+	}
+	src := feed.(*rss.Feed) // the default translator has checked
+	// The default translator maps items one to one, in order.
+	for i, it := range f.Items {
+		if i >= len(src.Items) {
+			break
+		}
+		if c := src.Items[i].Comments; c != "" {
+			if it.Custom == nil {
+				it.Custom = map[string]string{}
+			}
+			it.Custom[commentsKey] = c
+		}
+	}
+	return f, nil
+}
+
+// commentsURL keeps only an absolute http(s) URL with a host, so the
+// discussion link can only lead to another site, never run script or
+// resolve against scry.
+func commentsURL(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || len(s) > maxComments {
+		return ""
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" || (!strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https")) {
+		return ""
+	}
+	return s
+}
+
+// linksOnly reports sanitized HTML with no text outside links and no image,
+// such as Hacker News' lone "Comments" link. Shown as an excerpt it says
+// nothing, and the item's own links already cover it.
+func linksOnly(clean string) bool {
+	if strings.Contains(clean, "<img") {
+		return false
+	}
+	return strings.TrimSpace(html.UnescapeString(noLinks.Sanitize(clean))) == ""
 }
 
 // dedupKey is the guid, else the link, else a hash of title and date. The

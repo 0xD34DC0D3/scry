@@ -23,6 +23,7 @@ const rssBody = `<?xml version="1.0"?>
   <title>Example RSS</title><link>https://example.com/</link>
   <item><title>First</title><link>https://example.com/1</link><guid>g1</guid>
     <author>ann@example.com (Ann)</author>
+    <comments>https://example.com/1#comments</comments>
     <pubDate>Mon, 02 Jan 2006 15:04:05 GMT</pubDate>
     <description>&lt;p&gt;Hello &amp;amp; &lt;b&gt;world&lt;/b&gt;&lt;/p&gt;</description></item>
   <item><title>Second</title><link>https://example.com/2</link>
@@ -106,13 +107,14 @@ func (e env) exec(t *testing.T, q string, args ...any) {
 
 type itemRow struct {
 	key, url, title, author, html, excerpt string
+	comments                               string
 	published                              *int64
 	firstSeen                              int64
 }
 
 func (e env) items(t *testing.T) map[string]itemRow {
 	t.Helper()
-	rows, err := e.d.DB.Reader.Query(`SELECT i.dedup_key, i.url, i.title, i.author, i.published_at, i.first_seen_at, c.html, c.excerpt
+	rows, err := e.d.DB.Reader.Query(`SELECT i.dedup_key, i.url, i.title, i.author, i.comments_url, i.published_at, i.first_seen_at, c.html, c.excerpt
 		FROM items i JOIN item_contents c ON c.item_id = i.id WHERE i.feed_id = ?`, e.feed)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +123,7 @@ func (e env) items(t *testing.T) map[string]itemRow {
 	out := map[string]itemRow{}
 	for rows.Next() {
 		var r itemRow
-		if err := rows.Scan(&r.key, &r.url, &r.title, &r.author, &r.published, &r.firstSeen, &r.html, &r.excerpt); err != nil {
+		if err := rows.Scan(&r.key, &r.url, &r.title, &r.author, &r.comments, &r.published, &r.firstSeen, &r.html, &r.excerpt); err != nil {
 			t.Fatal(err)
 		}
 		out[r.key] = r
@@ -171,6 +173,9 @@ func TestSyncRSS(t *testing.T) {
 	}
 	if first.html != "<p>Hello &amp; <b>world</b></p>" || first.excerpt != "Hello & world" {
 		t.Errorf("first html %q excerpt %q", first.html, first.excerpt)
+	}
+	if first.comments != "https://example.com/1#comments" {
+		t.Errorf("first comments_url %q", first.comments)
 	}
 	// No guid: the link is the key. No date: published_at stays NULL.
 	if second, ok := items["https://example.com/2"]; !ok || second.published != nil || second.excerpt != "Two" {
@@ -233,7 +238,8 @@ func TestSyncDedup(t *testing.T) {
 	e.sync(t, now)
 	// A marker, so a second sync that reset first_seen_at would show.
 	e.exec(t, `UPDATE items SET first_seen_at = 1`)
-	mu.Store(strings.Replace(body, "<description>Two</description>", "<description>Two, edited</description>", 1))
+	body = strings.Replace(body, "<description>Two</description>", "<description>Two, edited</description>", 1)
+	mu.Store(strings.Replace(body, "/1#comments<", "/1#talk<", 1))
 
 	res := e.sync(t, now.Add(time.Hour))
 	if res.Status != "synced" || res.Items != 2 {
@@ -250,6 +256,9 @@ func TestSyncDedup(t *testing.T) {
 	}
 	if got := items["https://example.com/2"].html; got != "Two, edited" {
 		t.Errorf("content not rewritten: %q", got)
+	}
+	if got := items["g1"].comments; got != "https://example.com/1#talk" {
+		t.Errorf("comments_url not rewritten: %q", got)
 	}
 }
 

@@ -283,3 +283,56 @@ func TestPublicPaging(t *testing.T) {
 		})
 	}
 }
+
+func TestDomain(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"https://www.example.com/a", "example.com"},
+		{"https://news.ycombinator.com/item?id=1", "news.ycombinator.com"},
+		{"http://Example.org:8080/x", "Example.org"},
+		{"https://wwwx.example/", "wwwx.example"},
+		{"/relative", ""},
+		{"javascript:alert(1)", ""},
+		{"", ""},
+		{"http://[::1", ""}, // unparsable
+	}
+	for _, tc := range tests {
+		if got := domain(tc.in); got != tc.want {
+			t.Errorf("domain(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// The meta line carries the link's domain, the author, and a discussion
+// link; a javascript: discussion URL from the DB still never renders
+// executable.
+func TestPublicItemMeta(t *testing.T) {
+	f := newPublicFixture(t)
+	seedItem(t, f.d, f.a.ID, "w", "https://www.w.example/post", "Www post", "", 30*time.Minute)
+	for _, q := range []string{
+		`UPDATE items SET comments_url = 'https://talk.example/t?id=2&amp=1', author = 'Ann' WHERE dedup_key = 'a2'`,
+		`UPDATE items SET comments_url = 'javascript:alert(2)' WHERE dedup_key = 'b1'`,
+	} {
+		if _, err := f.d.Writer.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{"/", fmt.Sprintf("/feeds/%d", f.a.ID), fmt.Sprintf("/feeds/%d", f.b.ID)} {
+		t.Run(path, func(t *testing.T) {
+			body := do(f.h, get(path, "", nil)).Body.String()
+			want := []string{` · a.example`, ` · by Ann`, `<a href="https://talk.example/t?id=2&amp;amp=1">discussion</a>`, ` · w.example`}
+			if path == fmt.Sprintf("/feeds/%d", f.b.ID) {
+				want = []string{`<a href="#ZgotmplZ">discussion</a>`}
+			}
+			for _, w := range want {
+				if !strings.Contains(body, w) {
+					t.Errorf("missing %q", w)
+				}
+			}
+			for _, n := range []string{"javascript:", "www.w.example<", " · www."} {
+				if strings.Contains(body, n) {
+					t.Errorf("unexpected %q", n)
+				}
+			}
+		})
+	}
+}

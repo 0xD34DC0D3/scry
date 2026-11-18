@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -41,13 +42,26 @@ func (s *server) publicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /feeds/{id}", s.feedItems)
 }
 
-// itemView is one list entry. URL goes into href through html/template's
-// normal escaping, so a javascript: link from a feed renders as #ZgotmplZ.
+// itemView is one list entry. URL and CommentsURL go into href through
+// html/template's normal escaping, so a javascript: link from a feed renders
+// as #ZgotmplZ.
 type itemView struct {
 	ID, FeedID          int64
 	URL, Title, Excerpt string
+	Domain              string // URL's host, for telling sources apart
+	Author, CommentsURL string
 	FeedName            string // empty on a feed's own page
 	Seen                time.Time
+}
+
+// domain is the host a link leads to, without "www.". Computed at render
+// time, so nothing stored needs a migration when the rule changes.
+func domain(s string) string {
+	u, err := url.Parse(s)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(u.Hostname(), "www.")
 }
 
 type feedView struct {
@@ -140,6 +154,7 @@ func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 	for i, it := range rows {
 		items[i] = itemView{
 			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
+			Domain: domain(it.Url), Author: it.Author, CommentsURL: it.CommentsUrl,
 			FeedName: feedName(it.FeedTitle, it.FeedUrl), Seen: time.Unix(it.FirstSeenAt, 0).UTC(),
 		}
 	}
@@ -195,7 +210,11 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]itemView, len(rows))
 	for i, it := range rows {
-		items[i] = itemView{ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID, Seen: time.Unix(it.FirstSeenAt, 0).UTC()}
+		items[i] = itemView{
+			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
+			Domain: domain(it.Url), Author: it.Author, CommentsURL: it.CommentsUrl,
+			Seen: time.Unix(it.FirstSeenAt, 0).UTC(),
+		}
 	}
 	fv := &feedView{ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl, Paused: f.DisabledAt.Valid}
 	d := itemsData{Feed: fv}

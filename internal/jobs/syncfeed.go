@@ -141,6 +141,7 @@ func (d Deps) store(ctx context.Context, id int64, res fetched, p parsedFeed, no
 		itemID, err := q.UpsertItem(ctx, db.UpsertItemParams{
 			FeedID: id, DedupKey: it.dedupKey, Url: it.url, Title: it.title,
 			Author: it.author, PublishedAt: pub, FirstSeenAt: now.Unix(),
+			CommentsUrl: it.commentsURL,
 		})
 		if err != nil {
 			return syncResult{}, fmt.Errorf("upsert item: %w", err)

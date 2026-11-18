@@ -66,13 +66,14 @@ RETURNING id;
 -- An existing item keeps its id and first_seen_at, so it never shows as new
 -- again; the rest follows the feed's latest copy.
 -- name: UpsertItem :one
-INSERT INTO items (feed_id, dedup_key, url, title, author, published_at, first_seen_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO items (feed_id, dedup_key, url, title, author, published_at, first_seen_at, comments_url)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (feed_id, dedup_key) DO UPDATE
 SET url = excluded.url,
     title = excluded.title,
     author = excluded.author,
-    published_at = excluded.published_at
+    published_at = excluded.published_at,
+    comments_url = excluded.comments_url
 RETURNING id;
 
 -- name: UpsertItemContent :exec
@@ -88,7 +89,7 @@ SET html = excluded.html, excerpt = excluded.excerpt, fetched_at = excluded.fetc
 -- breaks ties. id is the rowid, so both indexes already end in it.
 
 -- name: ListLatestItems :many
-SELECT i.id, i.feed_id, i.url, i.title, i.first_seen_at,
+SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url, i.first_seen_at,
        CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt,
        f.title AS feed_title, f.url AS feed_url
 FROM items i
@@ -101,7 +102,7 @@ ORDER BY i.first_seen_at DESC, i.id DESC
 LIMIT sqlc.arg(lim);
 
 -- name: ListFeedItems :many
-SELECT i.id, i.feed_id, i.url, i.title, i.first_seen_at,
+SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url, i.first_seen_at,
        CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt
 FROM items i
 LEFT JOIN item_contents c ON c.item_id = i.id

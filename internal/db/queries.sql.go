@@ -251,7 +251,7 @@ func (q *Queries) ListCatalog(ctx context.Context, since int64) ([]ListCatalogRo
 }
 
 const listFeedItems = `-- name: ListFeedItems :many
-SELECT i.id, i.feed_id, i.url, i.title, i.first_seen_at,
+SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url, i.first_seen_at,
        CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt
 FROM items i
 LEFT JOIN item_contents c ON c.item_id = i.id
@@ -276,6 +276,8 @@ type ListFeedItemsRow struct {
 	FeedID      int64
 	Url         string
 	Title       string
+	Author      string
+	CommentsUrl string
 	FirstSeenAt int64
 	Excerpt     string
 }
@@ -300,6 +302,8 @@ func (q *Queries) ListFeedItems(ctx context.Context, arg ListFeedItemsParams) ([
 			&i.FeedID,
 			&i.Url,
 			&i.Title,
+			&i.Author,
+			&i.CommentsUrl,
 			&i.FirstSeenAt,
 			&i.Excerpt,
 		); err != nil {
@@ -358,7 +362,7 @@ func (q *Queries) ListFeeds(ctx context.Context) ([]Feed, error) {
 
 const listLatestItems = `-- name: ListLatestItems :many
 
-SELECT i.id, i.feed_id, i.url, i.title, i.first_seen_at,
+SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url, i.first_seen_at,
        CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt,
        f.title AS feed_title, f.url AS feed_url
 FROM items i
@@ -383,6 +387,8 @@ type ListLatestItemsRow struct {
 	FeedID      int64
 	Url         string
 	Title       string
+	Author      string
+	CommentsUrl string
 	FirstSeenAt int64
 	Excerpt     string
 	FeedTitle   string
@@ -413,6 +419,8 @@ func (q *Queries) ListLatestItems(ctx context.Context, arg ListLatestItemsParams
 			&i.FeedID,
 			&i.Url,
 			&i.Title,
+			&i.Author,
+			&i.CommentsUrl,
 			&i.FirstSeenAt,
 			&i.Excerpt,
 			&i.FeedTitle,
@@ -460,13 +468,14 @@ func (q *Queries) ResumeFeed(ctx context.Context, id int64) (int64, error) {
 }
 
 const upsertItem = `-- name: UpsertItem :one
-INSERT INTO items (feed_id, dedup_key, url, title, author, published_at, first_seen_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO items (feed_id, dedup_key, url, title, author, published_at, first_seen_at, comments_url)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (feed_id, dedup_key) DO UPDATE
 SET url = excluded.url,
     title = excluded.title,
     author = excluded.author,
-    published_at = excluded.published_at
+    published_at = excluded.published_at,
+    comments_url = excluded.comments_url
 RETURNING id
 `
 
@@ -478,6 +487,7 @@ type UpsertItemParams struct {
 	Author      string
 	PublishedAt sql.NullInt64
 	FirstSeenAt int64
+	CommentsUrl string
 }
 
 // An existing item keeps its id and first_seen_at, so it never shows as new
@@ -491,6 +501,7 @@ func (q *Queries) UpsertItem(ctx context.Context, arg UpsertItemParams) (int64, 
 		arg.Author,
 		arg.PublishedAt,
 		arg.FirstSeenAt,
+		arg.CommentsUrl,
 	)
 	var id int64
 	err := row.Scan(&id)

@@ -29,7 +29,7 @@
 {{define "items-page"}}{{$feedPage := .Data.Feed}}{{range .Data.Items}}
 <li class="item">
   <h3>{{if .URL}}<a href="{{.URL}}">{{or .Title .URL}}</a>{{else}}{{or .Title "(untitled)"}}{{end}}</h3>
-  <p class="item-meta"><time datetime="{{.Seen.Format "2006-01-02T15:04:05Z"}}">{{.Seen.Format "2006-01-02 15:04"}} UTC</time>{{if not $feedPage}} · <a href="/feeds/{{.FeedID}}">{{.FeedName}}</a>{{end}}</p>
+  <p class="item-meta"><time datetime="{{.Seen.Format "2006-01-02T15:04:05Z"}}">{{.Seen.Format "2006-01-02 15:04"}} UTC</time>{{if not $feedPage}} · <a href="/feeds/{{.FeedID}}">{{.FeedName}}</a>{{end}}{{with .Domain}} · {{.}}{{end}}{{with .Author}} · by {{.}}{{end}}{{with .CommentsURL}} · <a href="{{.}}">discussion</a>{{end}}</p>
   {{with .Excerpt}}<p class="excerpt">{{.}}</p>{{end}}
 </li>
 {{end}}{{with .Data.Older}}
