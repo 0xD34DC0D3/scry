@@ -64,6 +64,82 @@ func domain(s string) string {
 	return strings.TrimPrefix(u.Hostname(), "www.")
 }
 
+const (
+	// titleMax is how much excerpt stands in for a missing title, and
+	// urlMax how much of a URL: enough to recognize the story, short enough
+	// that the heading stays one or two lines.
+	titleMax = 80
+	urlMax   = 60
+)
+
+// Heading is the text of the item's title line. An untitled item gets its
+// excerpt's start, else its URL as host + path, so the line reads like a
+// title rather than a raw link; "(untitled)" only when there is nothing.
+func (i itemView) Heading() string {
+	if t := strings.TrimSpace(i.Title); t != "" {
+		return t
+	}
+	if e := strings.Join(strings.Fields(i.Excerpt), " "); e != "" {
+		return ellipsize(e, titleMax)
+	}
+	if u := readableURL(i.URL); u != "" {
+		return truncate(u, urlMax)
+	}
+	return "(untitled)"
+}
+
+// ShowExcerpt is false only when the excerpt already serves, whole, as the
+// heading, so the same words are not printed twice. A heading cut short from
+// a longer excerpt leaves the full text below rather than losing the rest.
+func (i itemView) ShowExcerpt() bool {
+	if i.Excerpt == "" {
+		return false
+	}
+	if strings.TrimSpace(i.Title) != "" {
+		return true
+	}
+	return len([]rune(strings.Join(strings.Fields(i.Excerpt), " "))) > titleMax
+}
+
+// ellipsize cuts s (single-spaced) to at most n runes on a word boundary and
+// adds "…"; short text is returned unchanged. A first word longer than n is
+// cut mid-word rather than leaving nothing.
+func ellipsize(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	cut := n
+	if r[n] != ' ' {
+		for cut > 0 && r[cut-1] != ' ' {
+			cut--
+		}
+		if cut == 0 {
+			cut = n
+		}
+	}
+	return strings.TrimRight(string(r[:cut]), " ,;:.-") + "…"
+}
+
+// truncate cuts s to at most n runes, ending in "…" when it cut.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}
+
+// readableURL is an http(s) link as host and path, without scheme, "www.",
+// query, fragment, or trailing slash; "" for anything else.
+func readableURL(s string) string {
+	u, err := url.Parse(s)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	return strings.TrimPrefix(u.Host, "www.") + strings.TrimRight(u.Path, "/")
+}
+
 // linkDomain is domain(link), or "" when it equals the host of any of own
 // (the feed's URLs): on a site's own feed the domain says nothing, but on an
 // aggregator it is the most useful field, and there it differs.

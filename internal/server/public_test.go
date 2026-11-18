@@ -320,6 +320,52 @@ func TestLinkDomain(t *testing.T) {
 	}
 }
 
+func TestItemHeading(t *testing.T) {
+	long := strings.Repeat("word ", 30)
+	tests := []struct {
+		name        string
+		it          itemView
+		want        string
+		showExcerpt bool
+	}{
+		{"titled", itemView{Title: "Real", URL: "https://a.example/x", Excerpt: "body"}, "Real", true},
+		{"titled no excerpt", itemView{Title: "Real"}, "Real", false},
+		{"short excerpt", itemView{URL: "https://a.example/x", Excerpt: "Just a  short\nnote"}, "Just a short note", false},
+		{"long excerpt on word boundary", itemView{Excerpt: long}, strings.TrimRight(strings.Repeat("word ", 16), " ") + "…", true},
+		{"exactly 80", itemView{Excerpt: strings.Repeat("a", 80)}, strings.Repeat("a", 80), false},
+		{"one huge word", itemView{Excerpt: strings.Repeat("a", 100)}, strings.Repeat("a", 80) + "…", true},
+		{"url fallback", itemView{URL: "https://www.a.example/2026/post/?utm=1#x"}, "a.example/2026/post", false},
+		{"url long", itemView{URL: "https://a.example/" + strings.Repeat("p", 100)}, ("a.example/" + strings.Repeat("p", 100))[:59] + "…", false},
+		{"bare host", itemView{URL: "https://a.example/"}, "a.example", false},
+		{"javascript url", itemView{URL: "javascript:alert(1)"}, "(untitled)", false},
+		{"nothing", itemView{}, "(untitled)", false},
+		{"blank title", itemView{Title: "  ", Excerpt: "from excerpt"}, "from excerpt", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.it.Heading(); got != tc.want {
+				t.Errorf("Heading() = %q, want %q", got, tc.want)
+			}
+			if got := tc.it.ShowExcerpt(); got != tc.showExcerpt {
+				t.Errorf("ShowExcerpt() = %v, want %v", got, tc.showExcerpt)
+			}
+		})
+	}
+}
+
+// An untitled item renders its excerpt as the linked heading, once.
+func TestPublicUntitledItem(t *testing.T) {
+	f := newPublicFixture(t)
+	seedItem(t, f.d, f.a.ID, "u", "https://a.example/u", "", "Untitled body text", time.Minute)
+	body := do(f.h, get("/", "", nil)).Body.String()
+	if !strings.Contains(body, `<a href="https://a.example/u">Untitled body text</a>`) {
+		t.Errorf("excerpt not used as heading:\n%s", body)
+	}
+	if n := strings.Count(body, "Untitled body text"); n != 1 {
+		t.Errorf("excerpt appears %d times, want 1", n)
+	}
+}
+
 func TestDomain(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"https://www.example.com/a", "example.com"},
