@@ -4,8 +4,7 @@
      the "Older" link fetches with htmx and swaps in place of itself; in that
      fragment (.Partial) the first item carries autofocus, which htmx focuses
      after the swap, so keyboard focus lands on the first new item instead of
-     falling back to <body>. Admin-only bits are cache-safe: an admin request
-     carries a credential, so setCache makes it private, no-store. */}}
+     falling back to <body>. */}}
 {{/* Everything: the home stream's switch when the user has subscriptions
      (the visible switch names the view, so the h1 is for screen readers),
      a nudge to subscribe when signed in without any, a sign-in note when
@@ -44,8 +43,6 @@
 <ol class="items">{{template "items-page" .}}</ol>
 {{else if .Data.Feed}}
 <p class="empty">{{if not .Data.Feed.LastPost.IsZero}}Nothing in the last 30 days (lists only show that window); last post was <time datetime="{{.Data.Feed.LastPost.Format "2006-01-02T15:04:05Z"}}">{{.Data.Feed.LastPost.Format "Jan 2, 2006"}}</time>.{{else}}This feed hasn't posted yet.{{end}} <a href="/everything">See the latest from every feed</a>.</p>
-{{else if and .User .User.IsAdmin}}
-<p class="empty">Nothing in the last 30 days. <a href="/admin/feeds">Manage feeds</a>.</p>
 {{else}}
 <p class="empty">Nothing in the last 30 days. <a href="/feeds">Browse the feeds</a>.</p>
 {{end}}{{end}}
@@ -62,27 +59,79 @@
 <li class="end">That's everything from the last 30 days.</li>
 {{end}}{{end}}
 
+{{/* The catalog, for everyone. Admins (.Data.Admin) also get the add form,
+     each feed's status and its actions; the handler fills a feed's .Admin
+     (failure details) only for them. Admin markup is cache-safe: an admin
+     request carries a credential, so setCache makes it private, no-store.
+     "catalog-panel" is the fragment every admin action swaps in; it holds
+     the add form so the input clears after an add. Paused covers both an
+     admin pause and the auto-disable after 10 failures (the failure count
+     and last error tell them apart); Resume clears either. */}}
 {{define "catalog"}}{{template "top" .}}
 <h1>Feeds</h1>
-{{if and .User .User.IsAdmin}}<p class="backlink"><a href="/admin/feeds">Manage feeds →</a></p>{{end}}
 {{if not .User}}<p class="note"><a href="{{.LoginURL}}">Sign in</a> to subscribe and read full posts.</p>{{end}}
-{{with .Data}}
-<div class="table-wrap">
-  <table>
-    <thead><tr><th>Feed</th><th>Last post</th><th>Posts (30 days)</th>{{if $.User}}<th>Reading</th>{{end}}</tr></thead>
-    <tbody>
-    {{range .}}
-      <tr>
-        <td data-label="Feed"><a href="/feeds/{{.ID}}">{{.Name}}</a>{{if .Paused}} <span class="badge off">paused</span>{{end}}{{with .SiteHost}}<br><span class="site-host">{{.}}</span>{{end}}</td>
-        <td data-label="Last post">{{if .LastPost.IsZero}}<span class="muted">never</span>{{else}}<time datetime="{{.LastPost.Format "2006-01-02T15:04:05Z"}}" title="{{.LastPost.Format "2006-01-02 15:04"}} UTC">{{.LastPostLabel}}</time>{{end}}</td>
-        <td data-label="Posts (30 days)">{{.RecentItems}}</td>
-        {{with .Sub}}<td data-label="Reading">{{template "sub" .}}</td>{{end}}
-      </tr>
-    {{end}}
-    </tbody>
-  </table>
-</div>
-{{else}}
-<p class="empty">No feeds yet.{{if and $.User $.User.IsAdmin}} <a href="/admin/feeds">Add one</a>.{{end}}</p>
-{{end}}
+{{template "catalog-panel" .}}
 {{template "bottom" .}}{{end}}
+
+{{define "catalog-panel"}}{{$admin := .Data.Admin}}<div id="catalog-panel">
+  {{with .Data.Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+  {{with .Data.Notice}}<p class="flash" role="status">{{.}}</p>{{end}}
+  {{if $admin}}
+  <form method="post" action="/feeds" hx-post="/feeds" hx-target="#catalog-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <div class="form-row">
+      <label>
+        <span>Feed URL</span>
+        <input name="url" type="url" required maxlength="2048" autocomplete="off" value="{{.Data.URL}}"{{if and .Partial .Data.FocusAdd}} autofocus{{end}}>
+      </label>
+      <button type="submit">Add</button>
+    </div>
+  </form>
+  {{end}}
+  {{with .Data.Feeds}}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feed</th><th>Last post</th><th>Posts (30 days)</th>{{if $.User}}<th>Reading</th>{{end}}{{if $admin}}<th>Status</th><th><span class="vh">Actions</span></th>{{end}}</tr></thead>
+      <tbody>
+      {{range .}}{{$f := .}}
+        <tr>
+          <td data-label="Feed"><a href="/feeds/{{.ID}}">{{.Name}}</a>{{if and .Paused (not .Admin)}} <span class="badge off">paused</span>{{end}}{{with .SiteHost}}<br><span class="site-host">{{.}}</span>{{end}}{{if .Admin}}<br><code>{{.URL}}</code>{{end}}</td>
+          <td data-label="Last post">{{if .LastPost.IsZero}}<span class="muted">never</span>{{else}}<time datetime="{{.LastPost.Format "2006-01-02T15:04:05Z"}}" title="{{.LastPost.Format "2006-01-02 15:04"}} UTC">{{.LastPostLabel}}</time>{{end}}</td>
+          <td data-label="Posts (30 days)">{{.RecentItems}}</td>
+          {{with .Sub}}<td data-label="Reading">{{template "sub" .}}</td>{{end}}
+          {{with .Admin}}
+          <td data-label="Status">{{if $f.Paused}}<span class="badge off">paused</span>{{else if .FailCount}}<span class="badge bad">failing</span>{{else}}<span class="badge">active</span>{{end}}{{if .FailCount}} <span class="muted">{{.FailCount}} {{if eq .FailCount 1}}failure{{else}}failures{{end}}</span>{{end}}{{with .LastError}}<details class="last-error"><summary>last error</summary><code>{{.}}</code></details>{{end}}</td>
+          <td data-label="">
+            <div class="actions">
+              {{if $f.Paused}}
+              <form method="post" action="/feeds/{{$f.ID}}/resume" hx-post="/feeds/{{$f.ID}}/resume" hx-target="#catalog-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+                <button class="ghost" type="submit" aria-label="Resume {{$f.Name}}">Resume</button>
+              </form>
+              {{else}}
+              <form method="post" action="/feeds/{{$f.ID}}/sync" hx-post="/feeds/{{$f.ID}}/sync" hx-target="#catalog-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+                <button class="ghost" type="submit" aria-label="Sync {{$f.Name}} now">Sync now</button>
+              </form>
+              <form method="post" action="/feeds/{{$f.ID}}/pause" hx-post="/feeds/{{$f.ID}}/pause" hx-target="#catalog-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+                <button class="ghost" type="submit" aria-label="Pause {{$f.Name}}">Pause</button>
+              </form>
+              {{end}}
+              <details class="confirm">
+                <summary>Remove</summary>
+                <div class="confirm-pop">
+                  <span>Remove this feed with all its items and subscriptions?</span>
+                  <form method="post" action="/feeds/{{$f.ID}}/remove" hx-post="/feeds/{{$f.ID}}/remove" hx-target="#catalog-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+                    <button class="danger" type="submit" aria-label="Remove {{$f.Name}}">Remove</button>
+                  </form>
+                </div>
+              </details>
+            </div>
+          </td>
+          {{end}}
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <p class="empty">No feeds yet.{{if $admin}} Add one by URL above.{{end}}</p>
+  {{end}}
+</div>{{end}}

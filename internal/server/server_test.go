@@ -221,21 +221,18 @@ func TestAuth(t *testing.T) {
 			t.Errorf("want login link only, got: %s", body)
 		}
 	})
-	t.Run("admin link on home", func(t *testing.T) {
-		if !strings.Contains(do(h, page("/", "admin")).Body.String(), `href="/admin/feeds"`) {
-			t.Error("admin home lacks the catalog link")
-		}
-		for _, c := range []string{"user", ""} {
-			if strings.Contains(do(h, page("/", c)).Body.String(), `href="/admin/feeds"`) {
-				t.Errorf("cookie %q sees the catalog link", c)
+	t.Run("no admin nav link", func(t *testing.T) {
+		for _, c := range []string{"admin", "user", ""} {
+			if strings.Contains(do(h, page("/", c)).Body.String(), `href="/admin`) {
+				t.Errorf("cookie %q sees an admin link", c)
 			}
 		}
 	})
 	t.Run("anonymous browser redirect", func(t *testing.T) {
-		rec := do(h, page(feedsPath, ""))
+		rec := do(h, page(followingPath, ""))
 		loc := rec.Header().Get("Location")
 		// next= comes from SCRY_BASE_URL, not the request's Host.
-		if rec.Code != http.StatusFound || !strings.HasSuffix(loc, "/login?next="+url.QueryEscape(testBaseURL+feedsPath)) {
+		if rec.Code != http.StatusFound || !strings.HasSuffix(loc, "/login?next="+url.QueryEscape(testBaseURL+followingPath)) {
 			t.Errorf("anonymous: %d Location=%q", rec.Code, loc)
 		}
 	})
@@ -253,7 +250,7 @@ func TestLoggedRouteSurvivesAuth(t *testing.T) {
 	do(h, withCookie(httptest.NewRequest(http.MethodGet, feedsPath, nil), "admin"))
 	do(h, httptest.NewRequest(http.MethodGet, "/nope", nil))
 	out := buf.String()
-	if !strings.Contains(out, `route="GET /admin/feeds"`) {
+	if !strings.Contains(out, `route="GET /feeds"`) {
 		t.Errorf("route missing from log: %s", out)
 	}
 	// The catch-all 404 pattern "/" names unknown paths; the raw path is

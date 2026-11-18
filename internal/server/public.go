@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +42,7 @@ func (s *server) publicRoutes(mux *http.ServeMux) {
 	// {$} so only "/" matches; a bare "/" would answer every unknown path.
 	mux.HandleFunc("GET /{$}", s.home)
 	mux.HandleFunc("GET "+everythingPath, s.everything)
-	mux.HandleFunc("GET /feeds", s.catalog)
+	mux.HandleFunc("GET "+feedsPath, s.catalog)
 	mux.HandleFunc("GET /feeds/{id}", s.feedItems)
 }
 
@@ -218,6 +219,28 @@ type feedView struct {
 	// LastPost as a short, human date.
 	SiteHost, LastPostLabel string
 	Sub                     *subControl // the signed-in user's subscribe button; nil signed out
+	// Admin is the feed's fetch health, set only for an admin's catalog:
+	// failure details never reach anyone else's page, even by mistake in a
+	// template.
+	Admin *feedAdmin
+}
+
+type feedAdmin struct {
+	FailCount int64
+	LastError string
+}
+
+// catalogData is /feeds. Admin adds the add form, each feed's status and
+// its actions; URL, Error and Notice come from those actions.
+type catalogData struct {
+	Feeds  []feedView
+	Admin  bool
+	URL    string // the add form's value, kept when it was rejected
+	Error  string
+	Notice string
+	// FocusAdd puts autofocus on the URL field in an htmx answer to an add,
+	// so focus lands back there after the panel swap.
+	FocusAdd bool
 }
 
 type itemsData struct {
@@ -378,6 +401,15 @@ func (s *server) everything(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
+	s.renderCatalog(w, r, catalogData{}, http.StatusOK)
+}
+
+// renderCatalog renders /feeds, or its "catalog-panel" fragment for htmx.
+// htmx swaps only 2xx responses by default, so a rejected admin action
+// answers it with 200 and the error inside the fragment; a plain post gets
+// status on the full page. setCache keeps the admin view private: an admin
+// request carries a credential.
+func (s *server) renderCatalog(w http.ResponseWriter, r *http.Request, d catalogData, status int) {
 	rows, err := s.r.ListCatalog(r.Context(), since())
 	if err != nil {
 		s.internalError(w, r, "list catalog", err)
@@ -389,6 +421,8 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "list subscriptions", err)
 		return
 	}
+	u := voodooauth.UserFrom(r.Context())
+	d.Admin = u != nil && u.IsAdmin
 	feeds := make([]feedView, len(rows))
 	for i, f := range rows {
 		feeds[i] = feedView{
@@ -397,11 +431,24 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 			SiteHost: domain(f.SiteUrl), LastPost: lastPost(f.LastPostAt),
 		}
 		feeds[i].LastPostLabel = ago(feeds[i].LastPost, now, toDay)
-		feeds[i].Sub = subFor(subs, f.ID, feeds[i].Name, "/feeds")
+		feeds[i].Sub = subFor(subs, f.ID, feeds[i].Name, feedsPath)
+		if d.Admin {
+			feeds[i].Admin = &feedAdmin{FailCount: f.FailCount, LastError: f.LastError}
+		}
 	}
+	// The user's own feeds first, each group in the query's (title) order.
+	sort.SliceStable(feeds, func(i, j int) bool { return subscribed(feeds[i]) && !subscribed(feeds[j]) })
+	d.Feeds = feeds
 	setCache(w, r)
-	s.web.Render(w, r, web.View{Page: "catalog", Title: "Feeds", Data: feeds, Nav: "feeds"})
+	// Admins get the wide measure for the status and action columns.
+	v := web.View{Page: "catalog", Fragment: "catalog-panel", Title: "Feeds", Data: d, Nav: "feeds", Wide: d.Admin}
+	if !isHTMX(r) {
+		v.Status = status
+	}
+	s.web.Render(w, r, v)
 }
+
+func subscribed(f feedView) bool { return f.Sub != nil && f.Sub.Subscribed }
 
 func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 	fid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

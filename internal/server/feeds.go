@@ -12,19 +12,21 @@ import (
 
 	"github.com/0xD34DC0D3/scry/internal/db"
 	"github.com/0xD34DC0D3/scry/internal/jobs"
-	"github.com/0xD34DC0D3/scry/internal/web"
 )
 
 // maxFeedURL caps a feed URL in bytes.
 const maxFeedURL = 2048
 
-const feedsPath = "/admin/feeds"
+// feedsPath is the one catalog page. Everyone reads it (public.go);
+// admins also add, pause, resume, sync and remove feeds from it.
+const feedsPath = "/feeds"
 
-// The feed catalog: admins list, add, pause, resume and remove feeds. scry's
-// admins are voodoo's (is_admin); there is no local role table.
+// The catalog's admin actions. scry's admins are voodoo's (is_admin); there
+// is no local role table. Users' subscribe/unsubscribe share the
+// /feeds/{id}/ prefix (reading.go); each action is its own literal pattern,
+// so the mux never has to choose between them.
 func (s *server) feedRoutes(mux *http.ServeMux) {
 	admin := func(h http.HandlerFunc) http.Handler { return s.auth.RequireAdmin(h) }
-	mux.Handle("GET "+feedsPath, admin(s.feedsPage))
 	mux.Handle("POST "+feedsPath, admin(s.addFeed))
 	// POST, not DELETE, so the remove button works as a plain form.
 	mux.Handle("POST "+feedsPath+"/{id}/pause", admin(s.feedAction((*db.Queries).PauseFeed)))
@@ -33,41 +35,14 @@ func (s *server) feedRoutes(mux *http.ServeMux) {
 	mux.Handle("POST "+feedsPath+"/{id}/sync", admin(s.syncFeed))
 }
 
-type feedsData struct {
-	Feeds  []db.Feed
-	URL    string // the add form's value, kept when it was rejected
-	Error  string
-	Notice string
-}
-
-func (s *server) renderFeeds(w http.ResponseWriter, r *http.Request, d feedsData, status int) {
-	feeds, err := s.r.ListFeeds(r.Context())
-	if err != nil {
-		s.internalError(w, r, "list feeds", err)
-		return
-	}
-	d.Feeds = feeds
-	v := web.View{Page: "feeds", Fragment: "feeds-panel", Title: "Manage feeds", Data: d, Nav: "admin", Wide: true}
-	// htmx swaps only 2xx responses by default, so a rejected add answers it
-	// with 200 and the error inside the fragment; a plain post gets the 4xx.
-	if r.Header.Get("HX-Request") != "true" {
-		v.Status = status
-	}
-	s.web.Render(w, r, v)
-}
-
-func (s *server) feedsPage(w http.ResponseWriter, r *http.Request) {
-	s.renderFeeds(w, r, feedsData{}, http.StatusOK)
-}
-
 // done answers a successful action: the fresh panel for htmx, otherwise
 // post/redirect/get so a reload does not repost.
-func (s *server) done(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("HX-Request") != "true" {
+func (s *server) done(w http.ResponseWriter, r *http.Request, d catalogData) {
+	if !isHTMX(r) {
 		http.Redirect(w, r, feedsPath, http.StatusSeeOther)
 		return
 	}
-	s.renderFeeds(w, r, feedsData{}, http.StatusOK)
+	s.renderCatalog(w, r, d, http.StatusOK)
 }
 
 func (s *server) addFeed(w http.ResponseWriter, r *http.Request) {
@@ -83,19 +58,19 @@ func (s *server) addFeed(w http.ResponseWriter, r *http.Request) {
 	raw := strings.TrimSpace(r.PostFormValue("url"))
 	u, msg := normalizeFeedURL(raw)
 	if msg != "" {
-		s.renderFeeds(w, r, feedsData{URL: raw, Error: msg}, http.StatusBadRequest)
+		s.renderCatalog(w, r, catalogData{URL: raw, Error: msg, FocusAdd: true}, http.StatusBadRequest)
 		return
 	}
 	if _, err := s.w.CreateFeed(r.Context(), u); err != nil {
 		// ON CONFLICT DO NOTHING returns no row for a URL already stored.
 		if errors.Is(err, sql.ErrNoRows) {
-			s.renderFeeds(w, r, feedsData{URL: raw, Error: "That feed is already in the catalog."}, http.StatusConflict)
+			s.renderCatalog(w, r, catalogData{URL: raw, Error: "That feed is already in the catalog.", FocusAdd: true}, http.StatusConflict)
 			return
 		}
 		s.internalError(w, r, "create feed", err)
 		return
 	}
-	s.done(w, r)
+	s.done(w, r, catalogData{FocusAdd: true})
 }
 
 // feedAction runs a by-id write; zero rows affected means no such feed
@@ -113,10 +88,10 @@ func (s *server) feedAction(q func(*db.Queries, context.Context, int64) (int64, 
 			return
 		}
 		if n == 0 {
-			s.renderFeeds(w, r, feedsData{Error: "That feed no longer exists."}, http.StatusNotFound)
+			s.renderCatalog(w, r, catalogData{Error: "That feed no longer exists."}, http.StatusNotFound)
 			return
 		}
-		s.done(w, r)
+		s.done(w, r, catalogData{})
 	}
 }
 
@@ -133,7 +108,7 @@ func (s *server) syncFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.r.GetFeed(r.Context(), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			s.renderFeeds(w, r, feedsData{Error: "That feed no longer exists."}, http.StatusNotFound)
+			s.renderCatalog(w, r, catalogData{Error: "That feed no longer exists."}, http.StatusNotFound)
 			return
 		}
 		s.internalError(w, r, "get feed", err)
@@ -141,14 +116,10 @@ func (s *server) syncFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.jobs.Send(r.Context(), jobs.SyncFeed(id)); err != nil {
 		slog.Error("send sync event", "feed_id", id, "err", err)
-		s.renderFeeds(w, r, feedsData{Error: "Couldn't start the sync. Try again."}, http.StatusServiceUnavailable)
+		s.renderCatalog(w, r, catalogData{Error: "Couldn't start the sync. Try again."}, http.StatusServiceUnavailable)
 		return
 	}
-	if r.Header.Get("HX-Request") != "true" {
-		http.Redirect(w, r, feedsPath, http.StatusSeeOther)
-		return
-	}
-	s.renderFeeds(w, r, feedsData{Notice: "Sync queued."}, http.StatusOK)
+	s.done(w, r, catalogData{Notice: "Sync queued."})
 }
 
 // normalizeFeedURL returns the form stored in feeds.url, or a message for

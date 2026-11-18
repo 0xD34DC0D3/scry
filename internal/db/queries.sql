@@ -145,8 +145,10 @@ WHERE i.feed_id = sqlc.arg(feed_id)
 
 -- Every feed, paused ones included (shown as paused), untitled ones last.
 -- recent_items counts by posted_at, like the lists; last_post_at is its max.
+-- fail_count and last_error are for admins only (the handler drops them
+-- for anyone else).
 -- name: ListCatalog :many
-SELECT f.id, f.url, f.title, f.site_url, f.disabled_at,
+SELECT f.id, f.url, f.title, f.site_url, f.disabled_at, f.fail_count, f.last_error,
        (SELECT count(*) FROM items i
         WHERE i.feed_id = f.id AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(sqlc.arg(since) AS INTEGER)) AS recent_items,
        -- Same posted time as GetFeedLastPostAt; 0 when the feed has no items.

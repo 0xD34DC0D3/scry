@@ -27,9 +27,6 @@
     </div>
     <nav aria-label="Main">
       <a href="/feeds"{{with .Current "feeds"}} aria-current="{{.}}"{{end}}>feeds</a>
-      {{- if and .User .User.IsAdmin}}
-      <a href="/admin/feeds"{{with .Current "admin"}} aria-current="{{.}}"{{end}}>admin</a>
-      {{- end}}
     </nav>
     <div class="who">
       {{- with .User}}

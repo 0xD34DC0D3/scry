@@ -144,7 +144,8 @@ func TestNavCurrent(t *testing.T) {
 		{"/feeds", "", `<a href="/feeds" aria-current="page">feeds</a>`, []string{`href="/" aria-current`}},
 		// One feed sits below /feeds: the section, not the page.
 		{fmt.Sprintf("/feeds/%d", f.a.ID), "", `<a href="/feeds" aria-current="true">feeds</a>`, []string{`aria-current="page"`}},
-		{feedsPath, "admin", `<a href="/admin/feeds" aria-current="page">admin</a>`, []string{`href="/feeds" aria-current`}},
+		// Admins get the same nav: the catalog is their admin page.
+		{"/feeds", "admin", `<a href="/feeds" aria-current="page">feeds</a>`, []string{`href="/admin`, ">admin</a>"}},
 		{"/nope", "", `<nav aria-label="Main">`, []string{"aria-current"}},
 	}
 	for _, tc := range tests {
@@ -162,26 +163,6 @@ func TestNavCurrent(t *testing.T) {
 	}
 }
 
-// The admin link on /feeds is cache-safe only because an admin request
-// carries a credential, which makes the page private.
-func TestCatalogAdminLink(t *testing.T) {
-	f := newPublicFixture(t)
-	for _, tc := range []struct {
-		cookie string
-		want   bool
-	}{{"", false}, {"user", false}, {"garbage", false}, {"admin", true}} {
-		t.Run(tc.cookie, func(t *testing.T) {
-			rec := do(f.h, get("/feeds", tc.cookie, nil))
-			if got := strings.Contains(rec.Body.String(), `href="/admin/feeds">Manage feeds →</a>`); got != tc.want {
-				t.Errorf("manage link shown = %v, want %v", got, tc.want)
-			}
-			if tc.want && rec.Header().Get("Cache-Control") != privateCache {
-				t.Errorf("admin catalog Cache-Control = %q", rec.Header().Get("Cache-Control"))
-			}
-		})
-	}
-}
-
 func TestEmptyStates(t *testing.T) {
 	h, d := newTestServer(t, nil)
 	empty := seedFeed(t, d, "https://empty.example/feed")
@@ -190,7 +171,7 @@ func TestEmptyStates(t *testing.T) {
 		want, not          []string
 	}{
 		{"latest anonymous", "/", "", []string{`class="empty"`, `href="/feeds">Browse the feeds</a>`}, []string{"everything from the last 30 days"}},
-		{"latest admin", "/", "admin", []string{`href="/admin/feeds">Manage feeds</a>`}, []string{`<p class="empty">Nothing in the last 30 days. <a href="/feeds">`}},
+		{"latest admin", "/", "admin", []string{`<p class="empty">Nothing in the last 30 days. <a href="/feeds">Browse the feeds</a>`}, []string{"Manage feeds"}},
 		{"feed", fmt.Sprintf("/feeds/%d", empty.ID), "", []string{`class="empty"`, `<a href="/everything">See the latest from every feed</a>`}, []string{"everything from the last 30 days"}},
 	}
 	for _, tc := range tests {
@@ -213,8 +194,8 @@ func TestEmptyStates(t *testing.T) {
 	if body := do(h2, get("/feeds", "", nil)).Body.String(); !strings.Contains(body, "No feeds yet.") || strings.Contains(body, "Add one") {
 		t.Errorf("anonymous empty catalog: %s", body)
 	}
-	if body := do(h2, get("/feeds", "admin", nil)).Body.String(); !strings.Contains(body, `<a href="/admin/feeds">Add one</a>`) {
-		t.Errorf("admin empty catalog lacks the add link: %s", body)
+	if body := do(h2, get("/feeds", "admin", nil)).Body.String(); !strings.Contains(body, "No feeds yet. Add one by URL above.") {
+		t.Errorf("admin empty catalog lacks the add hint: %s", body)
 	}
 }
 
@@ -295,7 +276,8 @@ func TestOffsiteCue(t *testing.T) {
 	}
 }
 
-func TestAdminPageUX(t *testing.T) {
+// The admin view of the catalog.
+func TestAdminCatalogUX(t *testing.T) {
 	h, d := newTestServer(t, nil)
 	fd := seedFeed(t, d, "https://broken.example/"+strings.Repeat("x", 100))
 	if _, err := d.Writer.Exec(`UPDATE feeds SET fail_count = 2, last_error = 'dial tcp: refused' WHERE id = ?`, fd.ID); err != nil {
@@ -303,8 +285,8 @@ func TestAdminPageUX(t *testing.T) {
 	}
 	body := do(h, get(feedsPath, "admin", nil)).Body.String()
 	for _, w := range []string{
-		`<main id="main" class="wide">`, "<h1>Manage feeds</h1>", "<title>Manage feeds · scry</title>",
-		`<details class="last-error"><summary>show</summary><code>dial tcp: refused</code></details>`,
+		`<main id="main" class="wide">`, "<h1>Feeds</h1>", "<title>Feeds · scry</title>",
+		`<details class="last-error"><summary>last error</summary><code>dial tcp: refused</code></details>`,
 		`hx-disabled-elt="find button"`,
 	} {
 		if !strings.Contains(body, w) {
@@ -315,9 +297,15 @@ func TestAdminPageUX(t *testing.T) {
 	if hx, dis := strings.Count(body, "hx-post="), strings.Count(body, `hx-disabled-elt="find button"`); hx != dis {
 		t.Errorf("%d hx-post forms, %d with hx-disabled-elt", hx, dis)
 	}
-	// Public pages keep the narrow measure.
-	if strings.Contains(do(h, get("/feeds", "admin", nil)).Body.String(), `class="wide"`) {
-		t.Error("public catalog is wide")
+	// One accent action: Add. Row buttons are ghost (Subscribe included).
+	if n := strings.Count(body, `<button type="submit"`); n != 1 || !strings.Contains(body, `<button type="submit">Add</button>`) {
+		t.Errorf("%d accent buttons, want Add only", n)
+	}
+	// Everyone else keeps the narrow measure.
+	for _, c := range []string{"", "user"} {
+		if strings.Contains(do(h, get("/feeds", c, nil)).Body.String(), `class="wide"`) {
+			t.Errorf("cookie %q: catalog is wide", c)
+		}
 	}
 }
 

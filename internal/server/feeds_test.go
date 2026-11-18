@@ -56,22 +56,17 @@ func actionPath(id int64, action string) string {
 }
 
 func isFragment(body string) bool {
-	return !strings.Contains(body, "<html") && strings.Contains(body, `id="feeds-panel"`)
+	return !strings.Contains(body, "<html") && strings.Contains(body, `id="catalog-panel"`)
 }
 
+// Every admin action refuses non-admins; GET /feeds is public (see
+// TestCatalogAdminMarkup).
 func TestFeedRoutesAuth(t *testing.T) {
 	routes := []struct {
 		name   string
 		req    func(id int64, cookie string) *http.Request
 		okCode int
 	}{
-		{"list", func(_ int64, c string) *http.Request {
-			req := httptest.NewRequest(http.MethodGet, feedsPath, nil)
-			if c != "" {
-				withCookie(req, c)
-			}
-			return req
-		}, http.StatusOK},
 		{"add", func(_ int64, c string) *http.Request {
 			return postForm(feedsPath, url.Values{"url": {"https://new.example/feed"}}, c, nil)
 		}, http.StatusSeeOther},
@@ -213,8 +208,8 @@ func TestFeedsFullVsFragment(t *testing.T) {
 			if rec.Code != http.StatusOK || !isFragment(rec.Body.String()) || !strings.Contains(rec.Body.String(), "https://seed.example/feed") {
 				t.Errorf("htmx: %d %s", rec.Code, rec.Body.String())
 			}
-			if !strings.Contains(rec.Header().Get("Vary"), "HX-Request") {
-				t.Errorf("Vary = %q", rec.Header().Get("Vary"))
+			if vary := strings.Join(rec.Header().Values("Vary"), ", "); !strings.Contains(vary, "HX-Request") {
+				t.Errorf("Vary = %q", vary)
 			}
 			// The add test posted a duplicate above; use a fresh URL.
 			if name == "add" {
@@ -223,7 +218,7 @@ func TestFeedsFullVsFragment(t *testing.T) {
 				rec = do(h, reqs[name](nil))
 			}
 			if name == "list" {
-				if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<html") || !strings.Contains(rec.Body.String(), `id="feeds-panel"`) {
+				if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<html") || !strings.Contains(rec.Body.String(), `id="catalog-panel"`) {
 					t.Errorf("plain: %d", rec.Code)
 				}
 				return
@@ -439,6 +434,7 @@ func TestFeedsListsFailing(t *testing.T) {
 		action string
 	}{
 		{"healthy", state{0, "", nil}, `badge">active`, "sync"},
+		{"one failure", state{1, "timeout", nil}, `badge bad">failing`, "sync"},
 		{"failing", state{3, "HTTP 500", nil}, `badge bad">failing`, "sync"},
 		{"auto-disabled", state{10, "HTTP 410 <gone>", 1_800_000_000}, `badge off">paused`, "resume"},
 	}
@@ -463,7 +459,14 @@ func TestFeedsListsFailing(t *testing.T) {
 			if row == "" {
 				t.Fatalf("feed not listed: %s", page)
 			}
-			want := []string{tc.badge, fmt.Sprintf(`Failures">%d<`, tc.st.fails), actionPath(ids[tc.name], tc.action)}
+			want := []string{tc.badge, actionPath(ids[tc.name], tc.action)}
+			if tc.st.fails > 0 {
+				noun := "failures"
+				if tc.st.fails == 1 {
+					noun = "failure"
+				}
+				want = append(want, fmt.Sprintf(`<span class="muted">%d %s</span>`, tc.st.fails, noun))
+			}
 			if tc.st.lastErr != "" {
 				want = append(want, html.EscapeString(tc.st.lastErr))
 			}
@@ -480,5 +483,88 @@ func TestFeedsListsFailing(t *testing.T) {
 	}
 	if got, _ := getFeed(t, d, ids["auto-disabled"]); got.DisabledAt.Valid || got.FailCount != 0 || got.LastError != "" || got.NextFetchAt != 0 {
 		t.Errorf("resume left %+v", got)
+	}
+}
+
+// Admin markup (add form, status, failure details, actions) is for admins
+// only; everyone else gets the plain catalog, signed out with the public
+// cache. An admin's page is private, no-store.
+func TestCatalogAdminMarkup(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	f := seedFeed(t, d, "https://broken.example/feed")
+	if _, err := d.Writer.Exec(`UPDATE feeds SET fail_count = 4, last_error = 'secret dial error', disabled_at = 1 WHERE id = ?`, f.ID); err != nil {
+		t.Fatal(err)
+	}
+	adminBits := []string{
+		`action="/feeds"`, `hx-post="/feeds"`, `<th>Status</th>`, "secret dial error", "4 failures",
+		actionPath(f.ID, "resume"), actionPath(f.ID, "remove"), `class="last-error"`, `id="main" class="wide"`,
+	}
+	for _, tc := range []struct {
+		cookie string
+		admin  bool
+		cache  string
+	}{
+		{"", false, publicCache},
+		{"garbage", false, privateCache},
+		{"user", false, privateCache},
+		{"admin", true, privateCache},
+	} {
+		for name, hdr := range map[string]map[string]string{"full": nil, "fragment": hx} {
+			t.Run(tc.cookie+"/"+name, func(t *testing.T) {
+				rec := do(h, get(feedsPath, tc.cookie, hdr))
+				body := rec.Body.String()
+				if rec.Code != http.StatusOK || !strings.Contains(body, `id="catalog-panel"`) {
+					t.Fatalf("status %d: %s", rec.Code, body)
+				}
+				if got := rec.Header().Get("Cache-Control"); got != tc.cache {
+					t.Errorf("Cache-Control = %q, want %q", got, tc.cache)
+				}
+				for _, b := range adminBits {
+					if name == "fragment" && strings.HasPrefix(b, `id="main"`) {
+						continue
+					}
+					if strings.Contains(body, b) != tc.admin {
+						t.Errorf("%q shown = %v, want %v", b, !tc.admin, tc.admin)
+					}
+				}
+				// Paused is public; non-admins see it beside the name.
+				if !strings.Contains(body, `badge off">paused`) {
+					t.Error("paused badge missing")
+				}
+			})
+		}
+	}
+}
+
+// Subscribed feeds come first in the catalog, then the rest in title order.
+func TestCatalogSubscribedFirst(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	a := seedFeed(t, d, "https://a.example/feed")
+	z := seedFeed(t, d, "https://z.example/feed")
+	if rec := do(h, postForm(fmt.Sprintf("/feeds/%d/subscribe", z.ID), nil, "user", nil)); rec.Code != http.StatusSeeOther {
+		t.Fatalf("subscribe: %d", rec.Code)
+	}
+	pos := func(body string, id int64) int { return strings.Index(body, fmt.Sprintf(`href="/feeds/%d"`, id)) }
+	anon := do(h, get(feedsPath, "", nil)).Body.String()
+	if pos(anon, a.ID) > pos(anon, z.ID) {
+		t.Error("signed out: not in title order")
+	}
+	user := do(h, get(feedsPath, "user", nil)).Body.String()
+	if pa, pz := pos(user, a.ID), pos(user, z.ID); pa < 0 || pz < 0 || pz > pa {
+		t.Errorf("subscribed feed not first: a=%d z=%d", pa, pz)
+	}
+}
+
+// After an htmx add, focus goes back to the URL field; a full page never
+// autofocuses.
+func TestAddFeedFocus(t *testing.T) {
+	h, _ := newTestServer(t, nil)
+	for _, u := range []string{"https://ok.example/feed", "nope"} {
+		if body := do(h, addFeedReq(u, hx)).Body.String(); !strings.Contains(body, `autocomplete="off" value="`) || !strings.Contains(body, ` autofocus>`) {
+			t.Errorf("%q: no autofocus on the URL field: %s", u, body)
+		}
+	}
+	if strings.Contains(do(h, addFeedReq("nope", nil)).Body.String(), "autofocus") {
+		t.Error("full page autofocuses")
 	}
 }
