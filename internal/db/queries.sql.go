@@ -203,15 +203,15 @@ func (q *Queries) GetFeed(ctx context.Context, id int64) (Feed, error) {
 }
 
 const getFeedLastPostAt = `-- name: GetFeedLastPostAt :one
-SELECT CAST(coalesce(max(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at)), 0) AS INTEGER) AS last_post_at
+SELECT CAST(coalesce(max(CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER)), 0) AS INTEGER) AS last_post_at
 FROM items i
 WHERE i.feed_id = ?
 `
 
-// When a feed last posted: the item date is published_at, else first_seen_at,
-// never later than first_seen_at (a feed can claim a future date). Items are
-// never pruned, so this outlives the 30-day window. 0 when the feed has no
-// items.
+// When a feed last posted: the max posted time (the expression the public
+// lists use, so items_feed_posted answers it with one index lookup). Items
+// are never pruned, so this outlives the 30-day window. 0 when the feed has
+// no items.
 func (q *Queries) GetFeedLastPostAt(ctx context.Context, feedID int64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, getFeedLastPostAt, feedID)
 	var last_post_at int64
@@ -222,9 +222,9 @@ func (q *Queries) GetFeedLastPostAt(ctx context.Context, feedID int64) (int64, e
 const listCatalog = `-- name: ListCatalog :many
 SELECT f.id, f.url, f.title, f.site_url, f.disabled_at,
        (SELECT count(*) FROM items i
-        WHERE i.feed_id = f.id AND i.first_seen_at >= ?1) AS recent_items,
-       -- Same item date as GetFeedLastPostAt; 0 when the feed has no items.
-       CAST(coalesce((SELECT max(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at))
+        WHERE i.feed_id = f.id AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(?1 AS INTEGER)) AS recent_items,
+       -- Same posted time as GetFeedLastPostAt; 0 when the feed has no items.
+       CAST(coalesce((SELECT max(CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER))
                       FROM items i WHERE i.feed_id = f.id), 0) AS INTEGER) AS last_post_at
 FROM feeds f
 ORDER BY f.title = '', f.title COLLATE NOCASE, f.url
@@ -241,6 +241,7 @@ type ListCatalogRow struct {
 }
 
 // Every feed, paused ones included (shown as paused), untitled ones last.
+// recent_items counts by posted_at, like the lists; last_post_at is its max.
 func (q *Queries) ListCatalog(ctx context.Context, since int64) ([]ListCatalogRow, error) {
 	rows, err := q.db.QueryContext(ctx, listCatalog, since)
 	if err != nil {
@@ -273,15 +274,16 @@ func (q *Queries) ListCatalog(ctx context.Context, since int64) ([]ListCatalogRo
 }
 
 const listFeedItems = `-- name: ListFeedItems :many
-SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url, i.first_seen_at,
+SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url,
+       CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) AS posted_at,
        CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt
 FROM items i
 LEFT JOIN item_contents c ON c.item_id = i.id
 WHERE i.feed_id = ?1
-  AND i.first_seen_at >= ?2
-  AND i.first_seen_at <= ?3
-  AND (i.first_seen_at < ?3 OR i.id < ?4)
-ORDER BY i.first_seen_at DESC, i.id DESC
+  AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(?2 AS INTEGER)
+  AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) <= CAST(?3 AS INTEGER)
+  AND (CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) < CAST(?3 AS INTEGER) OR i.id < CAST(?4 AS INTEGER))
+ORDER BY CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) DESC, i.id DESC
 LIMIT ?5
 `
 
@@ -300,7 +302,7 @@ type ListFeedItemsRow struct {
 	Title       string
 	Author      string
 	CommentsUrl string
-	FirstSeenAt int64
+	PostedAt    int64
 	Excerpt     string
 }
 
@@ -326,7 +328,7 @@ func (q *Queries) ListFeedItems(ctx context.Context, arg ListFeedItemsParams) ([
 			&i.Title,
 			&i.Author,
 			&i.CommentsUrl,
-			&i.FirstSeenAt,
+			&i.PostedAt,
 			&i.Excerpt,
 		); err != nil {
 			return nil, err
@@ -384,16 +386,17 @@ func (q *Queries) ListFeeds(ctx context.Context) ([]Feed, error) {
 
 const listLatestItems = `-- name: ListLatestItems :many
 
-SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url, i.first_seen_at,
+SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url,
+       CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) AS posted_at,
        CAST(coalesce(c.excerpt, '') AS TEXT) AS excerpt,
        f.title AS feed_title, f.url AS feed_url
 FROM items i
 JOIN feeds f ON f.id = i.feed_id
 LEFT JOIN item_contents c ON c.item_id = i.id
-WHERE i.first_seen_at >= ?1
-  AND i.first_seen_at <= ?2
-  AND (i.first_seen_at < ?2 OR i.id < ?3)
-ORDER BY i.first_seen_at DESC, i.id DESC
+WHERE CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(?1 AS INTEGER)
+  AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) <= CAST(?2 AS INTEGER)
+  AND (CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) < CAST(?2 AS INTEGER) OR i.id < CAST(?3 AS INTEGER))
+ORDER BY CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) DESC, i.id DESC
 LIMIT ?4
 `
 
@@ -411,17 +414,27 @@ type ListLatestItemsRow struct {
 	Title       string
 	Author      string
 	CommentsUrl string
-	FirstSeenAt int64
+	PostedAt    int64
 	Excerpt     string
 	FeedTitle   string
 	FeedUrl     string
 }
 
-// Public views (internal/server/public.go). Lists cover first_seen_at >= since
-// (30 days back), newest first. Paging is a keyset cursor on
-// (first_seen_at, id): the first page passes the max int64 for both. The
-// upper bound on first_seen_at keeps the index range tight; the OR only
-// breaks ties. id is the rowid, so both indexes already end in it.
+// Public views (internal/server/public.go). Lists are ordered, windowed
+// and paged by posted_at:
+//
+//	CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER)
+//
+// the expression migration 00006 indexes; spell it exactly so. Parameters
+// compared with it are CAST to INTEGER too: sqlc then types them int64, and
+// with INTEGER affinity on both sides SQLite applies no conversion, so it
+// uses the index range (a CAST on one side only scans the whole index).
+// Lists cover posted_at >= since (30 days back), newest first. Paging is a
+// keyset cursor on (posted_at, id): the first page passes the max int64 for
+// both. The upper bound on posted_at keeps the index range tight; the OR
+// only breaks ties. id is the rowid, so both indexes already end in it.
+// posted_at is never after first_seen_at, so everything listed is also
+// inside the prune's first_seen_at window.
 func (q *Queries) ListLatestItems(ctx context.Context, arg ListLatestItemsParams) ([]ListLatestItemsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listLatestItems,
 		arg.Since,
@@ -443,7 +456,7 @@ func (q *Queries) ListLatestItems(ctx context.Context, arg ListLatestItemsParams
 			&i.Title,
 			&i.Author,
 			&i.CommentsUrl,
-			&i.FirstSeenAt,
+			&i.PostedAt,
 			&i.Excerpt,
 			&i.FeedTitle,
 			&i.FeedUrl,

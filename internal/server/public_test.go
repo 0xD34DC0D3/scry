@@ -240,7 +240,7 @@ func TestPublicFragment(t *testing.T) {
 var olderRe = regexp.MustCompile(`href="(/[^"]*before=[^"]+)"`)
 
 // Paging walks every in-window item exactly once, through equal
-// first_seen_at values across page boundaries, and stops at the window.
+// posted times across page boundaries, and stops at the window.
 func TestPublicPaging(t *testing.T) {
 	h, d := newTestServer(t, nil)
 	fd := seedFeed(t, d, "https://many.example/feed")
@@ -253,6 +253,12 @@ func TestPublicPaging(t *testing.T) {
 		seedItemAt(t, d, fd.ID, fmt.Sprint(i), fmt.Sprintf("https://many.example/%d", i), fmt.Sprintf("item-%d.", i), "", base-int64(i/3)*60)
 	}
 	seedItem(t, d, fd.ID, "old", "https://many.example/old", "item-old.", "", 31*24*time.Hour)
+	// Move those times to published_at and mark every item first seen now,
+	// as when a feed is added with its backlog: the cursor must follow
+	// posted time, which then differs from first_seen_at.
+	if _, err := d.Writer.Exec(`UPDATE items SET published_at = first_seen_at, first_seen_at = ?`, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, start := range []string{"/", fmt.Sprintf("/feeds/%d", fd.ID)} {
 		t.Run(start, func(t *testing.T) {
@@ -417,4 +423,55 @@ func TestPublicItemMeta(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Lists order, window and count by posted time: published_at, clamped to
+// first_seen_at, else first_seen_at. A just-added feed's backlog keeps its
+// own dates instead of landing on top, a future date cannot pin an item
+// above newer ones, and an old post seen today stays out of the window.
+func TestPublicPostedAt(t *testing.T) {
+	h, d := newTestServer(t, nil)
+	fd := seedFeed(t, d, "https://dates.example/feed")
+	now := time.Now()
+	type seed struct {
+		key       string
+		seen      time.Duration // ago
+		published *time.Duration
+	}
+	ago := func(x time.Duration) *time.Duration { return &x }
+	seeds := []seed{
+		{"undated", time.Hour, nil},                           // posted 1h ago
+		{"backlog", time.Minute, ago(5 * 24 * time.Hour)},     // posted 5 days ago
+		{"future", 3 * time.Hour, ago(-24 * time.Hour)},       // clamped to 3h ago
+		{"resurfaced", time.Minute, ago(40 * 24 * time.Hour)}, // outside the window
+	}
+	for _, s := range seeds {
+		seedItemAt(t, d, fd.ID, s.key, "https://dates.example/"+s.key, "post-"+s.key+".", "", now.Add(-s.seen).Unix())
+		if s.published != nil {
+			if _, err := d.Writer.Exec(`UPDATE items SET published_at = ? WHERE dedup_key = ?`, now.Add(-*s.published).Unix(), s.key); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	futureAt := now.Add(-3 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+
+	for _, path := range []string{"/", fmt.Sprintf("/feeds/%d", fd.ID)} {
+		t.Run(path, func(t *testing.T) {
+			body := do(h, get(path, "", nil)).Body.String()
+			got := regexp.MustCompile(`post-[a-z]+\.`).FindAllString(body, -1)
+			want := []string{"post-undated.", "post-future.", "post-backlog."}
+			if strings.Join(got, " ") != strings.Join(want, " ") {
+				t.Errorf("order %v, want %v", got, want)
+			}
+			if !strings.Contains(body, `datetime="`+futureAt+`"`) {
+				t.Errorf("future date not clamped to first seen %s", futureAt)
+			}
+		})
+	}
+	t.Run("catalog", func(t *testing.T) {
+		body := do(h, get("/feeds", "", nil)).Body.String()
+		if !strings.Contains(body, `<td data-label="Posts (30 days)">3</td>`) {
+			t.Errorf("catalog count is not 3: %s", body)
+		}
+	})
 }

@@ -22,7 +22,7 @@ import (
 // item_contents.html is for signed-in readers (step 6).
 
 const (
-	// window is how far back the lists reach, by first_seen_at.
+	// window is how far back the lists reach, by posted time (see itemView).
 	window = 30 * 24 * time.Hour
 	// pageSize items per page; an "older" link fetches the next page.
 	pageSize = 50
@@ -51,7 +51,10 @@ type itemView struct {
 	Domain              string // URL's host unless it is the feed's own, for telling sources apart
 	Author, CommentsURL string
 	FeedName            string // empty on a feed's own page
-	Seen                time.Time
+	// Posted is the item's published date, clamped to no later than when
+	// scry first saw it, or first-seen when the feed gave no date. Lists
+	// sort, window and page by it (posted_at in queries.sql).
+	Posted time.Time
 }
 
 // domain is the host a link leads to, without "www.". Computed at render
@@ -214,7 +217,7 @@ func feedHeading(title, url string) string {
 	return url
 }
 
-// cursor reads ?before=<first_seen_at>-<id>. The first page has none and
+// cursor reads ?before=<posted_at>-<id>. The first page has none and
 // starts above every row.
 func cursor(r *http.Request) (at, id int64, ok bool) {
 	v := r.URL.Query().Get("before")
@@ -237,7 +240,7 @@ func older(path string, items []itemView) ([]itemView, string) {
 		return items, ""
 	}
 	last := pageSize - 1
-	return items[:pageSize], fmt.Sprintf("%s?before=%d-%d", path, items[last].Seen.Unix(), items[last].ID)
+	return items[:pageSize], fmt.Sprintf("%s?before=%d-%d", path, items[last].Posted.Unix(), items[last].ID)
 }
 
 // lastPost converts a last_post_at column; 0 means no items.
@@ -291,7 +294,7 @@ func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 		items[i] = itemView{
 			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
 			Domain: linkDomain(it.Url, it.FeedUrl), Author: it.Author, CommentsURL: it.CommentsUrl,
-			FeedName: feedName(it.FeedTitle, it.FeedUrl), Seen: time.Unix(it.FirstSeenAt, 0).UTC(),
+			FeedName: feedName(it.FeedTitle, it.FeedUrl), Posted: time.Unix(it.PostedAt, 0).UTC(),
 		}
 	}
 	d := itemsData{}
@@ -352,7 +355,7 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 		items[i] = itemView{
 			ID: it.ID, URL: it.Url, Title: it.Title, Excerpt: it.Excerpt, FeedID: it.FeedID,
 			Domain: linkDomain(it.Url, f.SiteUrl, f.Url), Author: it.Author, CommentsURL: it.CommentsUrl,
-			Seen: time.Unix(it.FirstSeenAt, 0).UTC(),
+			Posted: time.Unix(it.PostedAt, 0).UTC(),
 		}
 	}
 	fv := &feedView{ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl, Paused: f.DisabledAt.Valid}
