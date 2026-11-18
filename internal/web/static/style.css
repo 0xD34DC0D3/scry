@@ -352,14 +352,10 @@ pre {
   margin-top: var(--s3);
 }
 
-/* a back link with the path it returns to */
+/* a small back link above the page content */
 .backlink {
   font: 0.75rem var(--mono);
   margin: calc(-1 * var(--s4)) 0 var(--s4);
-}
-
-.backlink .path {
-  color: var(--muted);
 }
 
 /* ---------------------------------------------------------------- forms */
@@ -1020,6 +1016,21 @@ main:has(> .auth) {
   gap: 0.75rem;
   align-items: center;
   margin-bottom: var(--s4);
+}
+
+/* the feed's address, easy to copy; user-select: all picks the whole URL on
+   one click without any script */
+.feed-url {
+  margin-bottom: var(--s4);
+}
+
+.feed-url label {
+  margin-bottom: 0;
+}
+
+.feed-url input {
+  user-select: all;
+  color: var(--ink);
 }
 
 .excerpt {

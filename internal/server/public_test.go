@@ -108,13 +108,17 @@ func TestPublicPages(t *testing.T) {
 		{
 			name: "feed",
 			path: feedA,
-			want: []string{"<h1>Alpha News</h1>", "Alpha one", "Alpha two", `href="https://a.example/"`},
-			not:  []string{"Alpha ancient", "Bravo evil", "FULLHTML"},
+			want: []string{
+				"<h1>Alpha News</h1>", "Alpha one", "Alpha two",
+				`href="https://a.example/">Visit site</a>`, `<a href="/feeds">← All feeds</a>`,
+				`readonly value="https://a.example/feed"`, "Feed URL — paste into your reader",
+			},
+			not: []string{"Alpha ancient", "Bravo evil", "FULLHTML", `class="path"`, `>rss</a>`, `>website</a>`},
 		},
 		{
 			name: "paused feed",
 			path: feedB,
-			want: []string{"paused", `href="#ZgotmplZ"`, "evil excerpt"},
+			want: []string{"paused", `href="#ZgotmplZ"`, "evil excerpt", "<h1>b.example</h1>", "<title>b.example"}, // untitled: host, not URL
 			not:  []string{"javascript:", "Alpha"},
 		},
 	}

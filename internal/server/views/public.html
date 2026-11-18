@@ -13,13 +13,16 @@
 
 {{define "feed"}}{{template "top" .}}
 {{with .Data.Feed}}
-<h1>{{.Name}}</h1>
-<p class="backlink"><a href="/feeds">← back</a> <span class="path">/feeds</span></p>
-<p class="feed-meta">
+<h1>{{.Heading}}</h1>
+<p class="backlink"><a href="/feeds">← All feeds</a></p>
+<div class="feed-meta">
   {{if .Paused}}<span class="badge off">paused</span>{{end}}
-  {{with .SiteURL}}<a href="{{.}}">website</a>{{end}}
-  <a href="{{.URL}}">rss</a>
-</p>
+  {{with .SiteURL}}<a href="{{.}}">Visit site</a>{{end}}
+</div>
+<div class="feed-url">
+  <label for="feed-url"><span>Feed URL — paste into your reader</span></label>
+  <input id="feed-url" type="text" readonly value="{{.URL}}">
+</div>
 {{end}}
 {{template "item-list" .}}
 {{template "bottom" .}}{{end}}

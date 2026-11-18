@@ -67,6 +67,7 @@ func domain(s string) string {
 type feedView struct {
 	ID          int64
 	Name        string // title, or the URL when the feed has none yet
+	Heading     string // Name for the feed page: the host instead of a bare URL
 	URL         string
 	SiteURL     string
 	Paused      bool
@@ -82,6 +83,19 @@ type itemsData struct {
 func feedName(title, url string) string {
 	if title != "" {
 		return title
+	}
+	return url
+}
+
+// feedHeading is what the feed page shows as its title: the feed's title,
+// else its host (a bare URL reads as noise in an h1). feedName stays the
+// catalog and Latest label.
+func feedHeading(title, url string) string {
+	if title != "" {
+		return title
+	}
+	if d := domain(url); d != "" {
+		return d
 	}
 	return url
 }
@@ -217,8 +231,9 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	fv := &feedView{ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl, Paused: f.DisabledAt.Valid}
+	fv.Heading = feedHeading(f.Title, f.Url)
 	d := itemsData{Feed: fv}
 	d.Items, d.Older = older(fmt.Sprintf("/feeds/%d", fid), items)
 	setCache(w, r)
-	s.web.Render(w, r, web.View{Page: "feed", Fragment: "items-page", Title: fv.Name, Data: d, Nav: "feeds", NavSub: true})
+	s.web.Render(w, r, web.View{Page: "feed", Fragment: "items-page", Title: fv.Heading, Data: d, Nav: "feeds", NavSub: true})
 }

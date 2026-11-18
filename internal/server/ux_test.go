@@ -223,3 +223,16 @@ func TestOversizedBodyIsHTML(t *testing.T) {
 	rec := do(h, postForm(feedsPath, url.Values{"url": {strings.Repeat("a", maxBody+1)}}, "admin", nil))
 	checkErrorPage(t, rec.Code, rec.Header(), rec.Body.String(), http.StatusRequestEntityTooLarge)
 }
+
+func TestFeedHeading(t *testing.T) {
+	for _, tc := range []struct{ title, url, want string }{
+		{"Alpha News", "https://a.example/feed", "Alpha News"},
+		{"", "https://www.example.com/rss.xml", "example.com"},
+		{"", "http://example.com:8080/rss", "example.com"},
+		{"", "not a url", "not a url"},
+	} {
+		if got := feedHeading(tc.title, tc.url); got != tc.want {
+			t.Errorf("feedHeading(%q, %q) = %q, want %q", tc.title, tc.url, got, tc.want)
+		}
+	}
+}
