@@ -12,7 +12,7 @@ An RSS reader. Its first milestone is also the org's Go app template.
 
 ## Template (milestone 1)
 
-scry's first commit is the template: runnable, one example page, CI green, no feed code. After scry ships it moves to its own repo; new projects start from it with `gonew`.
+scry's first commit is the template: runnable, one example page, CI green, no feed code. It now lives in its own repo, [0xD34DC0D3/template](https://github.com/0xD34DC0D3/template); new projects start from it with `gonew`.
 
 - `cmd/<app>` (`serve`, `migrate`, `doctor`) and `internal/`.
 - Env config, `SCRY_` prefix; refuse unsafe prod settings. `SCRY_PROD` defaults to true so a server missing it fails safe; `.env.example` turns it off.
@@ -125,6 +125,7 @@ Step 6 decisions:
 - scry uses stdlib `net/http`; voodoo uses echo. Code copied from voodoo's server needs porting, not pasting.
 - scry's admin is voodoo's `is_admin`, though voodoo's README says `is_admin` is not an app role. Fine while one person runs everything; per-app roles would need a table.
 - Copies made from the template drift apart.
+- `main` is protected only against force pushes and deletion: no required pull requests or status checks, because the owner pushes directly. `docs/deploy.md` recommends requiring pull requests; until then, write access is enough to put code on `main` and so into the `production` environment.
 - `go.mod` replaces voodoo with `../voodoo` until voodoo tags a version: builds use whatever voodoo is checked out (CI: voodoo's `main`), so a scry build is not pinned to a voodoo commit.
 - `voodooauth` calls voodoo's `/me` once per request carrying an unknown or garbage credential (only positive answers are cached; no format check or request coalescing). One call per request, not amplification; revisit if voodoo sees abuse.
 - `backup.sh` does not read `/etc/scry/scry.env`. If `SCRY_DB_PATH` there differs from the default, backups print "nothing to back up" and exit 0 without the healthcheck ping (same as voodoo). Keep the default path.

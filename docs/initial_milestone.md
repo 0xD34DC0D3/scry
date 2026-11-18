@@ -6,9 +6,6 @@ with something that runs. `design.md` is the spec; this file is the order.
 Every step also ends with: `gofmt -l .` empty, `go vet`, `go test -race ./...`
 green, CI green, and `docs/design.md` updated with any decision or divergence.
 
-Until scry has a GitHub remote, "CI green" means the PM runs the CI job's
-steps locally (same commands as `.github/workflows/ci.yml`) and they pass.
-
 ## 1. Template (no feed code)
 
 Step 1 is the template described in `design.md`. It is split so each part runs
