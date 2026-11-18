@@ -36,6 +36,8 @@ func TestPublicQueriesUseIndex(t *testing.T) {
 		// seeks the feed's last entry instead of reading all its items.
 		{"catalog last post", listCatalog, 1, "SEARCH i USING COVERING INDEX items_feed_posted (feed_id=?)\n", false},
 		{"feed last post", getFeedLastPostAt, 1, "SEARCH i USING COVERING INDEX items_feed_posted (feed_id=?)", false},
+		{"latest count", countLatestItems, 3, "SEARCH i USING COVERING INDEX items_posted (<expr>>?)", false},
+		{"feed count", countFeedItems, 4, "SEARCH i USING COVERING INDEX items_feed_posted (feed_id=? AND <expr>>?)", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

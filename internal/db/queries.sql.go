@@ -54,6 +54,70 @@ func (q *Queries) ClaimDueFeeds(ctx context.Context, arg ClaimDueFeedsParams) ([
 	return items, nil
 }
 
+const countFeedItems = `-- name: CountFeedItems :one
+SELECT count(*) AS total,
+       CAST(coalesce(sum(CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) < CAST(?1 AS INTEGER)
+           OR (CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) = CAST(?1 AS INTEGER) AND i.id < CAST(?2 AS INTEGER))), 0) AS INTEGER) AS older
+FROM items i
+WHERE i.feed_id = ?3
+  AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(?4 AS INTEGER)
+`
+
+type CountFeedItemsParams struct {
+	BeforeAt int64
+	BeforeID int64
+	FeedID   int64
+	Since    int64
+}
+
+type CountFeedItemsRow struct {
+	Total int64
+	Older int64
+}
+
+func (q *Queries) CountFeedItems(ctx context.Context, arg CountFeedItemsParams) (CountFeedItemsRow, error) {
+	row := q.db.QueryRowContext(ctx, countFeedItems,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.FeedID,
+		arg.Since,
+	)
+	var i CountFeedItemsRow
+	err := row.Scan(&i.Total, &i.Older)
+	return i, err
+}
+
+const countLatestItems = `-- name: CountLatestItems :one
+
+SELECT count(*) AS total,
+       CAST(coalesce(sum(CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) < CAST(?1 AS INTEGER)
+           OR (CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) = CAST(?1 AS INTEGER) AND i.id < CAST(?2 AS INTEGER))), 0) AS INTEGER) AS older
+FROM items i
+WHERE CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(?3 AS INTEGER)
+`
+
+type CountLatestItemsParams struct {
+	BeforeAt int64
+	BeforeID int64
+	Since    int64
+}
+
+type CountLatestItemsRow struct {
+	Total int64
+	Older int64
+}
+
+// Position for the Older link: total is every item in the window, older the
+// ones after the cursor (the last item shown), so the page shows
+// total - older so far. One pass over the window's index range, covering:
+// no table rows are read.
+func (q *Queries) CountLatestItems(ctx context.Context, arg CountLatestItemsParams) (CountLatestItemsRow, error) {
+	row := q.db.QueryRowContext(ctx, countLatestItems, arg.BeforeAt, arg.BeforeID, arg.Since)
+	var i CountLatestItemsRow
+	err := row.Scan(&i.Total, &i.Older)
+	return i, err
+}
+
 const createFeed = `-- name: CreateFeed :one
 INSERT INTO feeds (url) VALUES (?) ON CONFLICT (url) DO NOTHING RETURNING id, url, title, site_url, etag, last_modified, next_fetch_at, fail_count, last_error, disabled_at
 `

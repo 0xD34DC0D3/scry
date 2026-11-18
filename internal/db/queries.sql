@@ -123,6 +123,26 @@ WHERE i.feed_id = sqlc.arg(feed_id)
 ORDER BY CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) DESC, i.id DESC
 LIMIT sqlc.arg(lim);
 
+-- Position for the Older link: total is every item in the window, older the
+-- ones after the cursor (the last item shown), so the page shows
+-- total - older so far. One pass over the window's index range, covering:
+-- no table rows are read.
+
+-- name: CountLatestItems :one
+SELECT count(*) AS total,
+       CAST(coalesce(sum(CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) < CAST(sqlc.arg(before_at) AS INTEGER)
+           OR (CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) = CAST(sqlc.arg(before_at) AS INTEGER) AND i.id < CAST(sqlc.arg(before_id) AS INTEGER))), 0) AS INTEGER) AS older
+FROM items i
+WHERE CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(sqlc.arg(since) AS INTEGER);
+
+-- name: CountFeedItems :one
+SELECT count(*) AS total,
+       CAST(coalesce(sum(CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) < CAST(sqlc.arg(before_at) AS INTEGER)
+           OR (CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) = CAST(sqlc.arg(before_at) AS INTEGER) AND i.id < CAST(sqlc.arg(before_id) AS INTEGER))), 0) AS INTEGER) AS older
+FROM items i
+WHERE i.feed_id = sqlc.arg(feed_id)
+  AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(sqlc.arg(since) AS INTEGER);
+
 -- Every feed, paused ones included (shown as paused), untitled ones last.
 -- recent_items counts by posted_at, like the lists; last_post_at is its max.
 -- name: ListCatalog :many

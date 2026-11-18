@@ -237,7 +237,10 @@ func TestPublicFragment(t *testing.T) {
 	}
 }
 
-var olderRe = regexp.MustCompile(`href="(/[^"]*before=[^"]+)"`)
+var (
+	olderRe = regexp.MustCompile(`href="(/[^"]*before=[^"]+)"`)
+	countRe = regexp.MustCompile(`Showing (\d+) of (\d+)`)
+)
 
 // Paging walks every in-window item exactly once, through equal
 // posted times across page boundaries, and stops at the window.
@@ -291,6 +294,15 @@ func TestPublicPaging(t *testing.T) {
 				// The end marker shows only where there is no Older link.
 				if hasEnd := strings.Contains(body, "everything from the last 30 days"); hasEnd != (path == "") {
 					t.Errorf("page %d: end marker %v with older %q", pages, hasEnd, path)
+				}
+				// The Older link counts everything shown so far, fragments
+				// included, out of the whole window.
+				pos := countRe.FindStringSubmatch(body)
+				switch {
+				case path == "" && pos != nil:
+					t.Errorf("page %d: count %q without Older", pages, pos[0])
+				case path != "" && (pos == nil || pos[1] != fmt.Sprint(len(seen)) || pos[2] != fmt.Sprint(n)):
+					t.Errorf("page %d: count %v, want Showing %d of %d", pages, pos, len(seen), n)
 				}
 			}
 			if pages != 3 || len(seen) != n || seen["item-old."] {

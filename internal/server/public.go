@@ -220,6 +220,11 @@ type itemsData struct {
 	Feed  *feedView // nil on the latest page
 	Items []itemView
 	Older string // next page's URL, empty on the last page
+	// Shown and Total place the page in the window ("Showing 100 of 312")
+	// next to the Older link. Shown counts every item down to this page's
+	// last, so it is right in an htmx fragment that only appends a page.
+	// Only set when there is an Older link.
+	Shown, Total int64
 }
 
 func feedName(title, url string) string {
@@ -307,8 +312,9 @@ func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 		s.badRequest(w, r, "That page link is malformed.")
 		return
 	}
+	cut := since()
 	rows, err := s.r.ListLatestItems(r.Context(), db.ListLatestItemsParams{
-		Since: since(), BeforeAt: at, BeforeID: id, Lim: pageSize + 1,
+		Since: cut, BeforeAt: at, BeforeID: id, Lim: pageSize + 1,
 	})
 	if err != nil {
 		s.internalError(w, r, "list latest items", err)
@@ -326,6 +332,17 @@ func (s *server) latest(w http.ResponseWriter, r *http.Request) {
 	}
 	d := itemsData{}
 	d.Items, d.Older = older("/", items)
+	if d.Older != "" {
+		last := d.Items[len(d.Items)-1]
+		c, err := s.r.CountLatestItems(r.Context(), db.CountLatestItemsParams{
+			Since: cut, BeforeAt: last.Posted.Unix(), BeforeID: last.ID,
+		})
+		if err != nil {
+			s.internalError(w, r, "count latest items", err)
+			return
+		}
+		d.Shown, d.Total = c.Total-c.Older, c.Total
+	}
 	setCache(w, r)
 	s.web.Render(w, r, web.View{Page: "latest", Fragment: "items-page", Title: "Latest", Data: d, Nav: "latest"})
 }
@@ -370,8 +387,9 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "get feed", err)
 		return
 	}
+	cut := since()
 	rows, err := s.r.ListFeedItems(r.Context(), db.ListFeedItemsParams{
-		FeedID: fid, Since: since(), BeforeAt: at, BeforeID: id, Lim: pageSize + 1,
+		FeedID: fid, Since: cut, BeforeAt: at, BeforeID: id, Lim: pageSize + 1,
 	})
 	if err != nil {
 		s.internalError(w, r, "list feed items", err)
@@ -400,6 +418,17 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 	}
 	d := itemsData{Feed: fv}
 	d.Items, d.Older = older(fmt.Sprintf("/feeds/%d", fid), items)
+	if d.Older != "" {
+		last := d.Items[len(d.Items)-1]
+		c, err := s.r.CountFeedItems(r.Context(), db.CountFeedItemsParams{
+			FeedID: fid, Since: cut, BeforeAt: last.Posted.Unix(), BeforeID: last.ID,
+		})
+		if err != nil {
+			s.internalError(w, r, "count feed items", err)
+			return
+		}
+		d.Shown, d.Total = c.Total-c.Older, c.Total
+	}
 	setCache(w, r)
 	s.web.Render(w, r, web.View{Page: "feed", Fragment: "items-page", Title: fv.Heading, Data: d, Nav: "feeds", NavSub: true})
 }

@@ -44,7 +44,7 @@
   {{if .ShowExcerpt}}<p class="excerpt">{{.Excerpt}}</p>{{end}}
 </li>
 {{end}}{{with .Data.Older}}
-<li class="more"><a class="btn" href="{{.}}" hx-get="{{.}}" hx-target="closest li" hx-swap="outerHTML">Older</a></li>
+<li class="more"><span class="count">Showing {{$.Data.Shown}} of {{$.Data.Total}}</span> · <a class="btn" href="{{.}}" hx-get="{{.}}" hx-target="closest li" hx-swap="outerHTML">Older</a></li>
 {{else}}
 <li class="end">That's everything from the last 30 days.</li>
 {{end}}{{end}}

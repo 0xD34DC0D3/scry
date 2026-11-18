@@ -1223,6 +1223,11 @@ main:has(> .auth) {
   padding-top: var(--s4);
 }
 
+.items .more .count {
+  font: 0.75rem var(--mono);
+  color: var(--muted);
+}
+
 /* htmx puts .htmx-request on the Older link while it loads (its own
    indicator styles are off for the CSP); this is the loading state and
    stops a second click */
