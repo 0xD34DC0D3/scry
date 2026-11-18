@@ -97,3 +97,5 @@ Out: Antfly, MCP, GraphQL, anything app-specific.
 - Production has no off-box backups yet (`/etc/scry/backup.env` absent); deploys take a local copy only.
 - A failure can be counted twice when Inngest retries the sync step after its write committed (the response was lost); ten such doubles disable a feed early. Resume fixes it.
 - Feed URL dedup folds only scheme and host case; `:443`, a trailing dot, `#fragment`, or IDN vs punycode variants store the same feed twice.
+- Catalog feed URLs and all their items are public, so a feed whose URL carries a secret token (a private feed) leaks it. Don't add such feeds.
+- Admin pages set no Cache-Control. They need auth and send no validators, so nothing caches them in practice.

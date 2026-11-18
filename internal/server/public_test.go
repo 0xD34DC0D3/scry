@@ -16,10 +16,16 @@ import (
 // seedItem stores an item seen age ago, with its excerpt.
 func seedItem(t *testing.T, d *db.DB, feedID int64, key, url, title, excerpt string, age time.Duration) int64 {
 	t.Helper()
+	return seedItemAt(t, d, feedID, key, url, title, excerpt, time.Now().Add(-age).Unix())
+}
+
+// seedItemAt stores an item first seen at the given unix time.
+func seedItemAt(t *testing.T, d *db.DB, feedID int64, key, url, title, excerpt string, seen int64) int64 {
+	t.Helper()
 	q := db.New(d.Writer)
 	id, err := q.UpsertItem(context.Background(), db.UpsertItemParams{
 		FeedID: feedID, DedupKey: key, Url: url, Title: title,
-		FirstSeenAt: time.Now().Add(-age).Unix(),
+		FirstSeenAt: seen,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -228,14 +234,17 @@ func TestPublicFragment(t *testing.T) {
 var olderRe = regexp.MustCompile(`href="(/[^"]*before=[^"]+)"`)
 
 // Paging walks every in-window item exactly once, through equal
-// first_seen_at values too, and stops at the window.
+// first_seen_at values across page boundaries, and stops at the window.
 func TestPublicPaging(t *testing.T) {
 	h, d := newTestServer(t, nil)
 	fd := seedFeed(t, d, "https://many.example/feed")
 	n := pageSize*2 + 5
+	// Groups of 3 share a timestamp, and with pageSize 50 the groups for
+	// rows 48-50 and 99-101 straddle both page boundaries, so paging is
+	// correct only with the id tie-break.
+	base := time.Now().Add(-time.Hour).Unix()
 	for i := range n {
-		// Pairs share a timestamp so the id tiebreak matters.
-		seedItem(t, d, fd.ID, fmt.Sprint(i), fmt.Sprintf("https://many.example/%d", i), fmt.Sprintf("item-%d.", i), "", time.Duration(i/2)*time.Minute)
+		seedItemAt(t, d, fd.ID, fmt.Sprint(i), fmt.Sprintf("https://many.example/%d", i), fmt.Sprintf("item-%d.", i), "", base-int64(i/3)*60)
 	}
 	seedItem(t, d, fd.ID, "old", "https://many.example/old", "item-old.", "", 31*24*time.Hour)
 

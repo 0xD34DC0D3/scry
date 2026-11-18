@@ -128,6 +128,8 @@ func (r *Renderer) Render(w http.ResponseWriter, req *http.Request, v View) {
 	}
 	if err := r.t.ExecuteTemplate(&buf, name, p); err != nil {
 		slog.Error("render", "template", name, "err", err)
+		// The handler may have marked the page cacheable; an error must not be.
+		w.Header().Del("Cache-Control")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
