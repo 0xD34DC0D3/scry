@@ -1,0 +1,131 @@
+{{/* Reading: the signed-in user's subscribed items with full HTML.
+
+     .HTML is item_contents.html, sanitized by bluemonday's UGC policy at
+     ingest; it is the only template.HTML here. Titles, URLs and names go
+     through html/template's normal escaping (a javascript: item URL renders
+     as #ZgotmplZ).
+
+     Fragments, each answering one htmx request. Each puts autofocus where
+     keyboard focus belongs after its swap (htmx focuses it), since the
+     swap removes the element that had focus:
+     - "reading-page": an Older page of entries (its first entry).
+     - "reading-panel": the toolbar, feed list and first page, after "mark
+       all read" (the unread tally).
+     - "entry-action": one entry in its new state after mark read/unread
+       (the entry), plus the unread counts swapped out of band
+       ("count-total", "count-feed" render the same element in the page
+       and in the swap).
+     - "sub-control": the subscribe/unsubscribe control (its new button). */}}
+{{define "reading"}}{{template "top" .}}
+{{with .Data.Feed}}
+<h1>{{.Name}}</h1>
+<p class="backlink"><a href="{{$.Data.AllFeeds}}">← all feeds</a> <span class="path">/reading</span> · <a href="/feeds/{{.ID}}">feed page</a></p>
+{{else}}
+<h1>Reading</h1>
+{{end}}
+{{template "reading-panel" .}}
+{{template "bottom" .}}{{end}}
+
+{{define "count-total"}}<span id="unread-total" class="n">{{.}}</span>{{end}}
+{{define "count-feed"}}<span id="unread-feed-{{.ID}}" class="count">{{if .Unread}}{{.Unread}}{{end}}</span>{{end}}
+
+{{define "reading-panel"}}<div id="reading-panel">
+{{if .Data.Subs}}
+<div class="toolbar">
+  <p class="tally"{{if .Data.Focus}} tabindex="-1" autofocus{{end}}>{{template "count-total" .Data.Total}} <span class="label">unread</span></p>
+  <nav class="seg" aria-label="Show">
+    <a href="{{.Data.Tabs.Unread}}"{{if not .Data.All}} aria-current="page"{{end}}>Unread</a>
+    <a href="{{.Data.Tabs.All}}"{{if .Data.All}} aria-current="page"{{end}}>All</a>
+  </nav>
+  {{if .Data.Total}}<form class="mark-all" method="post" action="/reading/mark-all-read" hx-post="/reading/mark-all-read" hx-target="#reading-panel" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <input type="hidden" name="upto" value="{{.Data.UptoID}}">
+    {{with .Data.Feed}}<input type="hidden" name="feed" value="{{.ID}}">{{end}}
+    {{if .Data.All}}<input type="hidden" name="view" value="all">{{end}}
+    <button type="submit">Mark all read{{if .Data.Feed}}<span class="vh"> in {{.Data.Feed.Name}}</span>{{end}}</button>
+  </form>{{end}}
+</div>
+<nav class="sub-feeds" aria-label="Your feeds">
+  <ul>
+    <li><a href="{{.Data.AllFeeds}}"{{if not .Data.Feed}} aria-current="page"{{end}}>All feeds</a></li>
+    {{range .Data.Subs}}
+    <li><a href="{{.Link}}"{{if and $.Data.Feed (eq $.Data.Feed.ID .ID)}} aria-current="page"{{end}}><span class="name">{{.Name}}</span>{{if .Paused}} <span class="paused">(paused)</span>{{end}} {{template "count-feed" .}}</a></li>
+    {{end}}
+  </ul>
+</nav>
+{{if .Data.Items}}
+<ol class="entries">{{template "reading-page" .}}</ol>
+{{else if .Data.All}}
+<p class="empty">Nothing from {{if .Data.Feed}}this feed{{else}}your feeds{{end}} in the last 30 days. <a href="/feeds">Browse the feeds</a>.</p>
+{{else}}
+<div class="caught-up">
+  <p><strong>All caught up.</strong></p>
+  <p>New posts show up here after the next sync. <a href="{{.Data.Tabs.All}}">See everything from the last 30 days</a>.</p>
+</div>
+{{end}}
+{{else}}
+<p class="empty">You haven't subscribed to any feeds yet. <a href="/feeds">Browse the feeds</a> and subscribe to the ones you want to read here. New posts from a feed show up after you subscribe.</p>
+{{end}}
+</div>{{end}}
+
+{{define "reading-page"}}{{range .Data.Items}}{{template "entry" .}}{{end}}
+{{with .Data.Older}}
+<li class="more"><a class="btn" href="{{.}}" hx-get="{{.}}" hx-target="closest li" hx-swap="outerHTML">Older</a></li>
+{{else}}
+<li class="end">— end of 30 days —</li>
+{{end}}{{end}}
+
+{{define "entry-action"}}{{template "entry" .Data.Item}}
+{{with .Data}}<span id="unread-total" class="n" hx-swap-oob="true">{{.Total}}</span>
+{{with .Feed}}<span id="unread-feed-{{.ID}}" class="count" hx-swap-oob="true">{{if .Unread}}{{.Unread}}{{end}}</span>{{end}}{{end}}{{end}}
+
+{{/* One mark-read/unread form; . is the entry. */}}
+{{define "mark-form"}}<form method="post" action="/reading/items/{{.ID}}/{{if .Unread}}read{{else}}unread{{end}}" hx-post="/reading/items/{{.ID}}/{{if .Unread}}read{{else}}unread{{end}}" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="back" value="{{.Back}}">
+        {{with .ScopeFeed}}<input type="hidden" name="feed" value="{{.}}">{{end}}
+        <button class="ghost" type="submit" aria-describedby="title-{{.ID}}">{{if .Unread}}Mark read{{else}}Mark unread{{end}}</button>
+      </form>{{end}}
+
+{{define "entry"}}<li class="entry {{if .Unread}}unread{{else}}read{{end}}{{if not .HTML}} link-only{{end}}" id="item-{{.ID}}"{{if .Focus}} tabindex="-1" autofocus{{end}}>
+  <article aria-labelledby="title-{{.ID}}">
+    <div class="entry-head">
+      <div class="entry-source">
+        {{if not .ScopeFeed}}<a href="/reading?feed={{.FeedID}}">{{.FeedName}}</a>{{end}}{{if not .Unread}} <span class="badge off">read</span>{{end}}
+        {{if and .Unread .HTML}}<div class="mark-top">{{template "mark-form" .}}</div>{{end}}
+      </div>
+      <h2 id="title-{{.ID}}">{{if .URL}}<a href="{{.URL}}">{{.Heading}}</a>{{else}}{{.Heading}}{{end}}</h2>
+      <p class="item-meta"><time datetime="{{.Posted.Format "2006-01-02T15:04:05Z"}}" title="{{.Posted.Format "2006-01-02 15:04"}} UTC">{{.PostedAgo}}</time>{{with .Domain}} · {{.}}{{end}}{{with .Author}} · by {{.}}{{end}}{{with .CommentsURL}} · <a href="{{.}}">discussion</a>{{end}}</p>
+    </div>
+    {{if .Unread}}
+    {{if .HTML}}
+    <div class="prose">{{.HTML}}</div>
+    {{end}}
+    <div class="entry-actions">
+      {{if .URL}}<a class="btn" href="{{.URL}}" aria-describedby="title-{{.ID}}">Open ↗</a>{{end}}
+      {{template "mark-form" .}}
+    </div>
+    {{else if or .HTML .Marked}}
+    <div class="entry-actions">
+      {{if .HTML}}<details class="reread"><summary>Show post</summary><div class="prose">{{.HTML}}</div></details>{{end}}
+      {{if .Marked}}{{template "mark-form" .}}{{end}}
+    </div>
+    {{end}}
+  </article>
+</li>{{end}}
+
+{{define "sub-control"}}{{template "sub" .Data}}{{end}}
+
+{{define "sub"}}<div class="sub">
+  {{if .Subscribed}}
+  <span class="sub-state">subscribed{{if .Unread}} · {{.Unread}} unread{{end}}</span>
+  <a class="sub-read" href="/reading?feed={{.FeedID}}" aria-label="Read {{.Name}}">read →</a>
+  <form method="post" action="/feeds/{{.FeedID}}/unsubscribe" hx-post="/feeds/{{.FeedID}}/unsubscribe" hx-target="closest .sub" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <input type="hidden" name="back" value="{{.Back}}">
+    <button class="ghost" type="submit" aria-label="Unsubscribe from {{.Name}}"{{if .Focus}} autofocus{{end}}>Unsubscribe</button>
+  </form>
+  {{else}}
+  <form method="post" action="/feeds/{{.FeedID}}/subscribe" hx-post="/feeds/{{.FeedID}}/subscribe" hx-target="closest .sub" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <input type="hidden" name="back" value="{{.Back}}">
+    <button{{if .Secondary}} class="ghost"{{end}} type="submit" aria-label="Subscribe to {{.Name}}"{{if .Focus}} autofocus{{end}}>Subscribe</button>
+  </form>
+  {{end}}
+</div>{{end}}

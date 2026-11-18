@@ -214,6 +214,7 @@ type feedView struct {
 	// Catalog only: SiteHost is SiteURL's host for display; LastPostLabel is
 	// LastPost as a short, human date.
 	SiteHost, LastPostLabel string
+	Sub                     *subControl // the signed-in user's subscribe button; nil signed out
 }
 
 type itemsData struct {
@@ -354,6 +355,11 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
+	subs, err := s.subscriptionsOf(r)
+	if err != nil {
+		s.internalError(w, r, "list subscriptions", err)
+		return
+	}
 	feeds := make([]feedView, len(rows))
 	for i, f := range rows {
 		feeds[i] = feedView{
@@ -362,6 +368,7 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 			SiteHost: domain(f.SiteUrl), LastPost: lastPost(f.LastPostAt),
 		}
 		feeds[i].LastPostLabel = ago(feeds[i].LastPost, now, toDay)
+		feeds[i].Sub = subFor(subs, f.ID, feeds[i].Name, "/feeds")
 	}
 	setCache(w, r)
 	s.web.Render(w, r, web.View{Page: "catalog", Title: "Feeds", Data: feeds, Nav: "feeds"})
@@ -405,6 +412,11 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 			Posted: posted, PostedAgo: ago(posted, now, toMinute),
 		}
 	}
+	subs, err := s.subscriptionsOf(r)
+	if err != nil {
+		s.internalError(w, r, "list subscriptions", err)
+		return
+	}
 	fv := &feedView{ID: f.ID, Name: feedName(f.Title, f.Url), URL: f.Url, SiteURL: f.SiteUrl, Paused: f.DisabledAt.Valid}
 	fv.Heading = feedHeading(f.Title, f.Url)
 	// Only an empty window needs it: say when a quiet feed last posted.
@@ -416,6 +428,7 @@ func (s *server) feedItems(w http.ResponseWriter, r *http.Request) {
 		}
 		fv.LastPost = lastPost(last)
 	}
+	fv.Sub = subFor(subs, fid, fv.Name, fmt.Sprintf("/feeds/%d", fid))
 	d := itemsData{Feed: fv}
 	d.Items, d.Older = older(fmt.Sprintf("/feeds/%d", fid), items)
 	if d.Older != "" {

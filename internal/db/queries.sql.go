@@ -283,6 +283,63 @@ func (q *Queries) GetFeedLastPostAt(ctx context.Context, feedID int64) (int64, e
 	return last_post_at, err
 }
 
+const getReadingItem = `-- name: GetReadingItem :one
+SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url,
+       CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) AS posted_at,
+       CAST(coalesce(c.html, '') AS TEXT) AS html,
+       f.title AS feed_title, f.url AS feed_url,
+       CAST(i.id > s.after_item_id AND i.first_seen_at > s.read_before_at AND r.item_id IS NULL AS INTEGER) AS unread,
+       CAST(i.id > s.after_item_id AND i.first_seen_at > s.read_before_at AND r.item_id IS NOT NULL AS INTEGER) AS marked
+FROM subscriptions s
+JOIN items i ON i.feed_id = s.feed_id
+JOIN feeds f ON f.id = s.feed_id
+LEFT JOIN item_contents c ON c.item_id = i.id
+LEFT JOIN item_reads r ON r.user_id = s.user_id AND r.item_id = i.id
+WHERE s.user_id = ?1 AND i.id = ?2
+`
+
+type GetReadingItemParams struct {
+	UserID string
+	ItemID int64
+}
+
+type GetReadingItemRow struct {
+	ID          int64
+	FeedID      int64
+	Url         string
+	Title       string
+	Author      string
+	CommentsUrl string
+	PostedAt    int64
+	Html        string
+	FeedTitle   string
+	FeedUrl     string
+	Unread      int64
+	Marked      int64
+}
+
+// One subscribed item, as ListReadingItems shows it (same columns, so the
+// rows convert).
+func (q *Queries) GetReadingItem(ctx context.Context, arg GetReadingItemParams) (GetReadingItemRow, error) {
+	row := q.db.QueryRowContext(ctx, getReadingItem, arg.UserID, arg.ItemID)
+	var i GetReadingItemRow
+	err := row.Scan(
+		&i.ID,
+		&i.FeedID,
+		&i.Url,
+		&i.Title,
+		&i.Author,
+		&i.CommentsUrl,
+		&i.PostedAt,
+		&i.Html,
+		&i.FeedTitle,
+		&i.FeedUrl,
+		&i.Unread,
+		&i.Marked,
+	)
+	return i, err
+}
+
 const listCatalog = `-- name: ListCatalog :many
 SELECT f.id, f.url, f.title, f.site_url, f.disabled_at,
        (SELECT count(*) FROM items i
@@ -538,6 +595,245 @@ func (q *Queries) ListLatestItems(ctx context.Context, arg ListLatestItemsParams
 	return items, nil
 }
 
+const listReadingItems = `-- name: ListReadingItems :many
+SELECT p.id, p.feed_id, p.url, p.title, p.author, p.comments_url, p.posted_at,
+       CAST(coalesce(c.html, '') AS TEXT) AS html,
+       f.title AS feed_title, f.url AS feed_url,
+       p.unread, p.marked
+FROM (
+    SELECT i.id, i.feed_id, i.url, i.title, i.author, i.comments_url,
+           CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) AS posted_at,
+           CAST(i.id > s.after_item_id AND i.first_seen_at > s.read_before_at AND r.item_id IS NULL AS INTEGER) AS unread,
+           CAST(i.id > s.after_item_id AND i.first_seen_at > s.read_before_at AND r.item_id IS NOT NULL AS INTEGER) AS marked
+    FROM subscriptions s
+    JOIN items i ON i.feed_id = s.feed_id
+    LEFT JOIN item_reads r ON r.user_id = s.user_id AND r.item_id = i.id
+    WHERE s.user_id = ?1
+      AND (CAST(?2 AS INTEGER) = 0 OR s.feed_id = CAST(?2 AS INTEGER))
+      AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(?3 AS INTEGER)
+      AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) <= CAST(?4 AS INTEGER)
+      AND (CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) < CAST(?4 AS INTEGER) OR i.id < CAST(?5 AS INTEGER))
+      AND (CAST(?6 AS INTEGER) = 0
+           OR (i.id > s.after_item_id AND i.first_seen_at > s.read_before_at AND r.item_id IS NULL))
+    ORDER BY CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) DESC, i.id DESC
+    LIMIT ?7
+) p
+JOIN feeds f ON f.id = p.feed_id
+LEFT JOIN item_contents c ON c.item_id = p.id
+ORDER BY p.posted_at DESC, p.id DESC
+`
+
+type ListReadingItemsParams struct {
+	UserID     string
+	FeedID     int64
+	Since      int64
+	BeforeAt   int64
+	BeforeID   int64
+	UnreadOnly int64
+	Lim        int64
+}
+
+type ListReadingItemsRow struct {
+	ID          int64
+	FeedID      int64
+	Url         string
+	Title       string
+	Author      string
+	CommentsUrl string
+	PostedAt    int64
+	Html        string
+	FeedTitle   string
+	FeedUrl     string
+	Unread      int64
+	Marked      int64
+}
+
+// Subscribed items, newest posted first, keyset paged on (posted_at, id)
+// like the public lists. feed_id 0 means every subscribed feed;
+// unread_only 1 drops read items. The inner query picks the page (sorting
+// and limiting without touching item_contents), so only that page's html
+// is read.
+func (q *Queries) ListReadingItems(ctx context.Context, arg ListReadingItemsParams) ([]ListReadingItemsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listReadingItems,
+		arg.UserID,
+		arg.FeedID,
+		arg.Since,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.UnreadOnly,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReadingItemsRow{}
+	for rows.Next() {
+		var i ListReadingItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Url,
+			&i.Title,
+			&i.Author,
+			&i.CommentsUrl,
+			&i.PostedAt,
+			&i.Html,
+			&i.FeedTitle,
+			&i.FeedUrl,
+			&i.Unread,
+			&i.Marked,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSubscriptions = `-- name: ListSubscriptions :many
+SELECT f.id, f.url, f.title, f.disabled_at,
+       (SELECT count(*) FROM items i
+        WHERE i.feed_id = s.feed_id
+          AND CAST(min(coalesce(i.published_at, i.first_seen_at), i.first_seen_at) AS INTEGER) >= CAST(?1 AS INTEGER)
+          AND i.id > s.after_item_id
+          AND i.first_seen_at > s.read_before_at
+          AND NOT EXISTS (SELECT 1 FROM item_reads r
+                          WHERE r.user_id = s.user_id AND r.item_id = i.id)) AS unread
+FROM subscriptions s
+JOIN feeds f ON f.id = s.feed_id
+WHERE s.user_id = ?2
+ORDER BY f.title = '', f.title COLLATE NOCASE, f.url
+`
+
+type ListSubscriptionsParams struct {
+	Since  int64
+	UserID string
+}
+
+type ListSubscriptionsRow struct {
+	ID         int64
+	Url        string
+	Title      string
+	DisabledAt sql.NullInt64
+	Unread     int64
+}
+
+// The user's subscriptions with unread counts, in catalog order.
+func (q *Queries) ListSubscriptions(ctx context.Context, arg ListSubscriptionsParams) ([]ListSubscriptionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSubscriptions, arg.Since, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSubscriptionsRow{}
+	for rows.Next() {
+		var i ListSubscriptionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Url,
+			&i.Title,
+			&i.DisabledAt,
+			&i.Unread,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markAllRead = `-- name: MarkAllRead :exec
+UPDATE subscriptions
+SET read_before_at = max(read_before_at, coalesce(
+        (SELECT i.first_seen_at FROM items i
+         WHERE i.feed_id = subscriptions.feed_id AND i.id <= ?1
+         ORDER BY i.first_seen_at DESC
+         LIMIT 1), 0))
+WHERE user_id = ?2
+  AND (CAST(?3 AS INTEGER) = 0 OR feed_id = ?3)
+`
+
+type MarkAllReadParams struct {
+	UptoID int64
+	UserID string
+	FeedID int64
+}
+
+// "Mark all read" moves each feed's read_before_at to the newest
+// first_seen_at among that feed's items that existed at render (id <=
+// upto_id), never backwards. One sync per feed runs at a time, so an item
+// that arrived after the render has a later first_seen_at than any older
+// item of its feed and stays unread. feed_id 0 means every subscription.
+// The subquery walks items_feed_first_seen from the newest down and stops
+// at the first id <= upto_id (only items newer than the render come
+// before it), instead of scanning the feed's whole history.
+func (q *Queries) MarkAllRead(ctx context.Context, arg MarkAllReadParams) error {
+	_, err := q.db.ExecContext(ctx, markAllRead, arg.UptoID, arg.UserID, arg.FeedID)
+	return err
+}
+
+const markItemRead = `-- name: MarkItemRead :exec
+INSERT INTO item_reads (user_id, item_id, read_at)
+SELECT s.user_id, i.id, ?1
+FROM items i
+JOIN subscriptions s ON s.feed_id = i.feed_id AND s.user_id = ?2
+WHERE i.id = ?3
+ON CONFLICT (user_id, item_id) DO NOTHING
+`
+
+type MarkItemReadParams struct {
+	Now    int64
+	UserID string
+	ItemID int64
+}
+
+// Only items of a subscribed feed; marking twice keeps the first time.
+func (q *Queries) MarkItemRead(ctx context.Context, arg MarkItemReadParams) error {
+	_, err := q.db.ExecContext(ctx, markItemRead, arg.Now, arg.UserID, arg.ItemID)
+	return err
+}
+
+const markItemUnread = `-- name: MarkItemUnread :exec
+DELETE FROM item_reads WHERE user_id = ? AND item_id = ?
+`
+
+type MarkItemUnreadParams struct {
+	UserID string
+	ItemID int64
+}
+
+func (q *Queries) MarkItemUnread(ctx context.Context, arg MarkItemUnreadParams) error {
+	_, err := q.db.ExecContext(ctx, markItemUnread, arg.UserID, arg.ItemID)
+	return err
+}
+
+const maxItemID = `-- name: MaxItemID :one
+SELECT CAST(coalesce(max(id), 0) AS INTEGER) FROM items
+`
+
+// The newest item id: the page's watermark for "mark all read". Item ids
+// grow in commit order (one writer, rowid max + 1), so ids up to it are
+// exactly the items that existed when the page was rendered.
+func (q *Queries) MaxItemID(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, maxItemID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const pauseFeed = `-- name: PauseFeed :execrows
 UPDATE feeds SET disabled_at = coalesce(disabled_at, unixepoch()) WHERE id = ?
 `
@@ -614,6 +910,51 @@ func (q *Queries) ResumeFeed(ctx context.Context, id int64) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const subscribe = `-- name: Subscribe :exec
+
+INSERT INTO subscriptions (user_id, feed_id, subscribed_at, after_item_id)
+VALUES (?1, ?2, ?3,
+        (SELECT coalesce(max(id), 0) FROM items))
+ON CONFLICT (user_id, feed_id) DO NOTHING
+`
+
+type SubscribeParams struct {
+	UserID       string
+	FeedID       int64
+	SubscribedAt int64
+}
+
+// Reading (internal/server/reading.go). user_id is voodoo's id. Like the
+// public lists, reading lists sort, window (30 days) and page by posted_at,
+// spelled exactly as the 00006 indexes, with CAST parameters. Unread is
+// about arrival, not posting: an item is unread when its id is above the
+// subscription's after_item_id (it was committed after the user
+// subscribed), its first_seen_at is after read_before_at, and it has no
+// item_reads row; it also has to be listable, so inside the posted window.
+// posted_at <= first_seen_at <= read_at, so a listed item's read row is
+// never older than the window and the prune cannot remove it. Items whose
+// content was pruned still list, with empty html (LEFT JOIN).
+// after_item_id is the newest item id now: whatever a sync commits from
+// here on, even one that started earlier, counts as new.
+func (q *Queries) Subscribe(ctx context.Context, arg SubscribeParams) error {
+	_, err := q.db.ExecContext(ctx, subscribe, arg.UserID, arg.FeedID, arg.SubscribedAt)
+	return err
+}
+
+const unsubscribe = `-- name: Unsubscribe :exec
+DELETE FROM subscriptions WHERE user_id = ? AND feed_id = ?
+`
+
+type UnsubscribeParams struct {
+	UserID string
+	FeedID int64
+}
+
+func (q *Queries) Unsubscribe(ctx context.Context, arg UnsubscribeParams) error {
+	_, err := q.db.ExecContext(ctx, unsubscribe, arg.UserID, arg.FeedID)
+	return err
 }
 
 const upsertItem = `-- name: UpsertItem :one

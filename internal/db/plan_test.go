@@ -38,6 +38,13 @@ func TestPublicQueriesUseIndex(t *testing.T) {
 		{"feed last post", getFeedLastPostAt, 1, "SEARCH i USING COVERING INDEX items_feed_posted (feed_id=?)", false},
 		{"latest count", countLatestItems, 3, "SEARCH i USING COVERING INDEX items_posted (<expr>>?)", false},
 		{"feed count", countFeedItems, 4, "SEARCH i USING COVERING INDEX items_feed_posted (feed_id=? AND <expr>>?)", false},
+		// Reading (step 6): per subscribed feed, the posted range of that
+		// feed; the merge across feeds sorts (a page of 10, after the range).
+		{"reading list", listReadingItems, 7, "SEARCH i USING INDEX items_feed_posted (feed_id=? AND <expr>>? AND <expr><?)", false},
+		{"reading unread count", listSubscriptions, 2, "SEARCH i USING INDEX items_feed_posted (feed_id=? AND <expr>>?)", false},
+		// Mark all read: the newest pre-render first_seen_at of each feed,
+		// read backwards from the end of items(feed_id, first_seen_at).
+		{"mark all read", markAllRead, 3, "SEARCH i USING COVERING INDEX items_feed_first_seen (feed_id=?)", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

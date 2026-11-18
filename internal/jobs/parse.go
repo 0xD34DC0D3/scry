@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"html"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,7 +24,15 @@ const (
 
 // Policies are safe for concurrent use once built.
 var (
-	ugc = bluemonday.UGCPolicy()
+	// Links in stored content get rel="nofollow noreferrer" (noreferrer
+	// implies noopener), so they leak nothing even if the page's
+	// Referrer-Policy changes. Rows are rewritten on their next fetch.
+	ugc = func() *bluemonday.Policy {
+		p := bluemonday.UGCPolicy().RequireNoReferrerOnLinks(true)
+		// prepareHTML adds it to every image.
+		p.AllowAttrs("loading").Matching(regexp.MustCompile(`^lazy$`)).OnElements("img")
+		return p
+	}()
 	// The space keeps "<p>a</p><p>b</p>" from reading as "ab"; script and
 	// style contents are dropped, not kept as text.
 	strict = bluemonday.StrictPolicy().AddSpaceWhenStrippingTag(true)
@@ -57,8 +66,9 @@ func parseFeed(body []byte) (parsedFeed, error) {
 		// link-only one ("Continue reading") falls through to the next, and
 		// if both are, the item has none.
 		var clean string
+		base := contentBase(it.Link, f.Link)
 		for _, raw := range []string{it.Content, it.Description} {
-			if c := ugc.Sanitize(raw); !linksOnly(c) {
+			if c := ugc.Sanitize(prepareHTML(raw, base, it.Title)); !linksOnly(c) {
 				clean = c
 				break
 			}

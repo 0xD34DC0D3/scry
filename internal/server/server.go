@@ -55,6 +55,7 @@ func New(d *db.DB, auth *voodooauth.Client, jc inngestgo.Client, siteURL string)
 	mux.Handle(jobs.Path, jc.Serve())
 	s.publicRoutes(mux)
 	s.feedRoutes(mux)
+	s.readingRoutes(mux)
 	// Everything no other pattern claims gets the HTML 404 page instead of
 	// the mux's text/plain one. It has no method, so a known path asked
 	// with the wrong method is a 404 here too, not a 405: a method in the

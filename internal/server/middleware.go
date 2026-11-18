@@ -178,3 +178,10 @@ func requestLogger(next http.Handler) http.Handler {
 		}
 	})
 }
+
+// readingContentSecurityPolicy is contentSecurityPolicy plus images from any
+// https site, for the reading pages: feed articles embed their images from
+// their own hosts. The UGC policy strips every other embedded resource
+// (iframes, video, style), so only img-src is widened, and only there.
+// Plain-http images stay blocked (mixed content on an https page anyway).
+const readingContentSecurityPolicy = contentSecurityPolicy + "; img-src 'self' https:"

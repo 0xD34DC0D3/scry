@@ -132,3 +132,40 @@ func TestCommentsURLAtom(t *testing.T) {
 		t.Errorf("commentsURL = %q", got)
 	}
 }
+
+// Content links leak no referrer; script and handlers are gone.
+func TestContentSanitized(t *testing.T) {
+	it := parseOne(t, rssItem(`<description><![CDATA[<p onclick="x()">See <a href="https://blog.example/x">this</a>.</p><script>alert(1)</script><iframe src="https://evil.example/"></iframe>]]></description>`))
+	if !strings.Contains(it.html, `rel="nofollow noreferrer"`) {
+		t.Errorf("link lacks rel noreferrer: %s", it.html)
+	}
+	for _, bad := range []string{"onclick", "script", "iframe"} {
+		if strings.Contains(it.html, bad) {
+			t.Errorf("html keeps %s: %s", bad, it.html)
+		}
+	}
+}
+
+// Stray end tags cannot reach the page, where they would close the
+// reading entry around the content.
+func TestContentBalanced(t *testing.T) {
+	it := parseOne(t, rssItem(`<description><![CDATA[<p>x</div></li></article></ol><blockquote>open <ul><li>y</ol>]]></description>`))
+	want := `<p>x</p><blockquote>open <ul><li>y</li></ul></blockquote>`
+	if it.html != want {
+		t.Errorf("html = %q, want %q", it.html, want)
+	}
+}
+
+// Feed markup cannot define ids or names: they would collide with the
+// reading page's own (aria targets, #item-<n> anchors, htmx targets).
+func TestContentNoIDs(t *testing.T) {
+	it := parseOne(t, rssItem(`<description><![CDATA[<h2 id="title-1">Hi</h2><p id="unread-total">x <a name="item-2" href="https://a.example/">y</a></p><map name="m"><area alt="a" href="https://a.example/"></map><dfn id="reading-panel">z</dfn>]]></description>`))
+	for _, bad := range []string{"id=", "name="} {
+		if strings.Contains(it.html, bad) {
+			t.Errorf("html keeps %s: %s", bad, it.html)
+		}
+	}
+	if !strings.Contains(it.html, "<h4>Hi</h4>") {
+		t.Errorf("content lost: %s", it.html)
+	}
+}

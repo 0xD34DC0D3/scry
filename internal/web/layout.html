@@ -26,6 +26,9 @@
       <a class="app" href="/">{{.App}}</a>
     </div>
     <nav aria-label="Main">
+      {{- if .User}}
+      <a href="/reading"{{with .Current "reading"}} aria-current="{{.}}"{{end}}>reading</a>
+      {{- end}}
       <a href="/"{{with .Current "latest"}} aria-current="{{.}}"{{end}}>latest</a>
       <a href="/feeds"{{with .Current "feeds"}} aria-current="{{.}}"{{end}}>feeds</a>
       {{- if and .User .User.IsAdmin}}
