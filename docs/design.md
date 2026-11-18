@@ -79,3 +79,5 @@ Out: Antfly, MCP, GraphQL, anything app-specific.
 - `backup.sh` does not read `/etc/scry/scry.env`. If `SCRY_DB_PATH` there differs from the default, backups print "nothing to back up" and exit 0 without the healthcheck ping (same as voodoo). Keep the default path.
 - Images load directly from other sites, which see readers' IP addresses.
 - Feeds whose guids change on every fetch produce duplicates.
+- Inngest sync is manual from the dashboard: inngestgo v0.16+ refuses unsigned `PUT /api/inngest` unless `INNGEST_ENABLE_UNAUTHED_SYNC` is set. Enabling it would also need `ServeOrigin` pinned to `SCRY_BASE_URL`, or the synced URL comes from the Host header.
+- Production has no off-box backups yet (`/etc/scry/backup.env` absent); deploys take a local copy only.

@@ -84,6 +84,12 @@ runs it.
 Done: `make deploy` to the droplet brings up `scry.0xd34dc0d3.dev/healthz`;
 login round-trips through `auth.0xd34dc0d3.dev`.
 
+Done 2026-11-17 (scry e29c9c1): `/healthz` 200 in production, signed-in
+browser shows the email, Inngest Cloud synced both example functions, and
+the example event added a note. Not checked in production: `/admin` 403 for
+a non-admin (needs a non-admin account; covered by tests). Off-box backups
+not configured yet.
+
 ## 2. Schema and feed catalog
 
 - One migration with the five tables in `design.md`. sqlc queries for the

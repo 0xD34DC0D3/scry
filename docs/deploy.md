@@ -57,7 +57,9 @@ and `aws` are already there; if not, follow voodoo's doc).
    copy the signing key and event key into `/etc/scry/scry.env`, and after the
    first deploy sync the app with URL `https://scry.example.com/api/inngest`
    (Apps, Sync new app). Re-sync after any deploy that adds or changes
-   functions.
+   functions, from the dashboard (Resync): the SDK (v0.16+) refuses an
+   unsigned `curl -X PUT .../api/inngest` with 401 unless
+   `INNGEST_ENABLE_UNAUTHED_SYNC` is set, and scry leaves it unset.
 
 7. **Backups.** Create `/etc/scry/backup.env` (root:root 0600) from
    `deploy/backup.env.example`. Use the same bucket as voodoo, with prefix
