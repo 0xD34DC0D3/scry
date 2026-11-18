@@ -53,15 +53,15 @@ func parseFeed(body []byte) (parsedFeed, error) {
 	}
 	out := parsedFeed{title: strings.TrimSpace(f.Title), siteURL: strings.TrimSpace(f.Link)}
 	for _, it := range f.Items {
-		// Full content when the feed has it; many feeds put only a summary
-		// in description.
-		raw := it.Content
-		if strings.TrimSpace(raw) == "" {
-			raw = it.Description
-		}
-		clean := ugc.Sanitize(raw)
-		if linksOnly(clean) {
-			clean = ""
+		// Full content when the feed has it, else the description; a
+		// link-only one ("Continue reading") falls through to the next, and
+		// if both are, the item has none.
+		var clean string
+		for _, raw := range []string{it.Content, it.Description} {
+			if c := ugc.Sanitize(raw); !linksOnly(c) {
+				clean = c
+				break
+			}
 		}
 		p := parsedItem{
 			dedupKey:    dedupKey(it),
@@ -119,7 +119,7 @@ func commentsURL(s string) string {
 		return ""
 	}
 	u, err := url.Parse(s)
-	if err != nil || u.Host == "" || (!strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https")) {
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return ""
 	}
 	return s

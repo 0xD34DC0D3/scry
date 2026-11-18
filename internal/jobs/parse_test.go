@@ -66,6 +66,13 @@ func TestLinkOnlyExcerpts(t *testing.T) {
 <description><![CDATA[<a href="https://comic.example/1"><img src="https://comic.example/1.png" alt=""></a>]]></description>`,
 		},
 		{
+			name: "link-only content falls back to description",
+			children: `<title>Essay</title><link>https://blog.example/essay</link>
+<description>&lt;p&gt;An essay about feeds.&lt;/p&gt;</description>
+<content:encoded xmlns:content="http://purl.org/rss/1.0/modules/content/"><![CDATA[<p><a href="https://blog.example/essay">Continue reading</a></p>]]></content:encoded>`,
+			wantExcerpt: "An essay about feeds.",
+		},
+		{
 			name: "text around a link is kept",
 			children: `<title>Note</title><link>https://blog.example/n</link>
 <description><![CDATA[See <a href="https://blog.example/x">this</a> first.]]></description>`,
