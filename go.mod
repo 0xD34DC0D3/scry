@@ -10,7 +10,7 @@ require (
 	github.com/mmcdole/gofeed v1.5.0
 	github.com/pressly/goose/v3 v3.30.1
 	golang.org/x/net v0.62.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
